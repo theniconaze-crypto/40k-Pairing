@@ -1,0 +1,12 @@
+{
+  "name": "Ordre de Bataille — Pairing 40k",
+  "short_name": "Ordre de Bataille",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#100e0c",
+  "theme_color": "#100e0c",
+  "icons": [
+    { "src": "icon.png", "sizes": "1024x1024", "type": "image/png" },
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" }
+  ]
+}
