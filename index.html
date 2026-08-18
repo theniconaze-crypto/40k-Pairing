@@ -506,7 +506,7 @@
     </details>
 
     <h2 class="section-title">Affinité par Force Disposition</h2>
-    <div class="hint">Les 5 Force Dispositions du Chapter Approved 2026-27 (Prise de Position, Purge de l'Ennemi, Reconnaissance, Perturbation, Points Stratégiques — noms officiels FR à confirmer par GW). Note de -2 à +2 à quel point ta disposition prend l'avantage sur celle de l'adversaire, indépendamment des listes. Ce tableau est rempli automatiquement (win rate observé FD contre FD, agrégé sur les tournois disputés depuis le lancement de la V11) à chaque clic sur « 🔎 Rafraîchir la méta » (onglet Configuration ou onglet Matchups) ; tu peux ensuite ajuster chaque case à la main — tes réglages manuels sont conservés jusqu'au prochain rafraîchissement. Optionnel, laisse à 0 si tu préfères t'en tenir au seul matchup de listes.</div>
+    <div class="hint">Les 5 Force Dispositions du Chapter Approved 2026-27 (Prise de Position, Purge de l'Ennemi, Reconnaissance, Perturbation, Points Stratégiques — noms officiels FR à confirmer par GW). Note de -3 à +3 à quel point ta disposition prend l'avantage sur celle de l'adversaire, indépendamment des listes (même échelle que le tableau meta faction vs faction ci-dessus). Ce tableau est rempli automatiquement (win rate observé FD contre FD, agrégé sur les tournois disputés depuis le lancement de la V11) à chaque clic sur « 🔎 Rafraîchir la méta » (onglet Configuration ou onglet Matchups) ; tu peux ensuite ajuster chaque case à la main — tes réglages manuels sont conservés jusqu'au prochain rafraîchissement. Optionnel, laisse à 0 si tu préfères t'en tenir au seul matchup de listes.</div>
     <div class="matrix-wrap"><table class="matrix" id="fdMatrix"></table></div>
     <div class="hint" id="fdMatrixStatus" style="margin-top:8px;"></div>
   </div>
@@ -1453,7 +1453,7 @@ function buildFdMatrixFromObject(obj){
       const vBA = resolved[j+'|||'+i];
       if(vAB===undefined && vBA===undefined) continue;
       matchedPairs++;
-      const net = Math.max(-2, Math.min(2, Math.round(((vAB||0) - (vBA||0)) / (vAB!==undefined && vBA!==undefined ? 2 : 1))));
+      const net = Math.max(-3, Math.min(3, Math.round(((vAB||0) - (vBA||0)) / (vAB!==undefined && vBA!==undefined ? 2 : 1))));
       matrix[i][j] = net;
       matrix[j][i] = -net;
     }
@@ -1485,7 +1485,7 @@ async function fetchMetaRefreshFromGemini(statusEl, btn){
 
 1) "factionPower" : pour chacune des factions suivantes, un score de niveau de puissance actuel dans la méta, de -3 (très faible, win rate nettement sous 50%) à +3 (très fort, win rate nettement au-dessus de 50% / domine la méta), basé sur les win rates de tournoi les plus récents que tu trouves. Factions (utilise exactement ces noms comme clés) : ${factionList}. Format : {"NomDeFaction": score, ...} pour CHAQUE faction listée.
 
-2) "fdMatrix" : les 5 Force Dispositions introduites par le Chapter Approved 2026-27 (V11) sont : ${fdList}. En te basant sur les résultats de tournois disputés depuis leur introduction (win rate observé quand la Force Disposition A affronte la Force Disposition B, toutes listes confondues), donne un score de -2 (A nettement désavantagée face à B) à +2 (A nettement avantagée face à B) pour CHAQUE Force Disposition A face à CHACUNE des 4 autres Force Dispositions B. Utilise IMPÉRATIVEMENT cette structure JSON imbriquée (une sous-clé par FD adverse, PAS de clé combinée avec un séparateur) : {"Take and Hold": {"Purge the Foe": score, "Reconnaissance": score, "Disruption": score, "Priority Assets": score}, "Purge the Foe": {"Take and Hold": score, ...}, ...} en répétant ce schéma pour les 5 Force Dispositions comme clé de premier niveau (utilise EXACTEMENT ces noms anglais, sans traduction : ${fdList}). Si tu ne trouves pas assez de données de tournoi pour distinguer certaines paires, mets 0 plutôt que d'inventer un score — mais essaie de renseigner toutes les paires, ce tableau ne doit pas rester vide.
+2) "fdMatrix" : les 5 Force Dispositions introduites par le Chapter Approved 2026-27 (V11) sont : ${fdList}. En te basant sur les résultats de tournois disputés depuis leur introduction (win rate observé quand la Force Disposition A affronte la Force Disposition B, toutes listes confondues), donne un score de -3 (A très nettement désavantagée face à B) à +3 (A très nettement avantagée face à B) pour CHAQUE Force Disposition A face à CHACUNE des 4 autres Force Dispositions B — même échelle -3/+3 que le niveau de puissance par faction ci-dessus. Utilise IMPÉRATIVEMENT cette structure JSON imbriquée (une sous-clé par FD adverse, PAS de clé combinée avec un séparateur) : {"Take and Hold": {"Purge the Foe": score, "Reconnaissance": score, "Disruption": score, "Priority Assets": score}, "Purge the Foe": {"Take and Hold": score, ...}, ...} en répétant ce schéma pour les 5 Force Dispositions comme clé de premier niveau (utilise EXACTEMENT ces noms anglais, sans traduction : ${fdList}). Si tu ne trouves pas assez de données de tournoi pour distinguer certaines paires, mets 0 plutôt que d'inventer un score — mais essaie de renseigner toutes les paires, ce tableau ne doit pas rester vide.
 
 Format final attendu : {"factionPower": {...}, "fdMatrix": {...}}`;
     const response = await fetch(
@@ -1602,7 +1602,7 @@ function fdShortLabels(){
   return FORCE_DISPOSITIONS.map(fd=>FD_LABELS_FR[fd]);
 }
 function renderFdMatrix(){
-  renderMatrix('fdMatrix', fdShortLabels(), fdShortLabels(), state.fdMatrix, -2, 2, renderLive);
+  renderMatrix('fdMatrix', fdShortLabels(), fdShortLabels(), state.fdMatrix, -3, 3, renderLive);
   const statusEl = document.getElementById('fdMatrixStatus');
   if(statusEl) statusEl.textContent = (state.fdMatrixUpdatedLabel || FD_MATRIX_DEFAULT_LABEL) + '.';
 }
