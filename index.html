@@ -1392,54 +1392,73 @@ function extractJsonObject(text){
 }
 
 /* ---------- Rafraîchissement de la méta via Gemini (clé API perso, recherche web) ---------- */
-// Construit la liste des clés attendues pour la matrice FD × FD, au même format
-// "A|||B" que factionMetaKey (réutilisé pour parser/appliquer la réponse de Gemini).
-function fdMatrixKeyList(){
-  const keys = [];
-  FORCE_DISPOSITIONS.forEach(a=>{
-    FORCE_DISPOSITIONS.forEach(b=>{
-      keys.push(factionMetaKey(a,b));
-    });
-  });
-  return keys;
+
+// Normalise un nom de Force Disposition pour la comparaison (espaces, casse) et retrouve
+// son index canonique dans FORCE_DISPOSITIONS, que Gemini ait répondu avec le nom anglais
+// exact ou le libellé français (FD_LABELS_FR) — tolérance nécessaire car les LLM ne
+// respectent pas toujours à la lettre le nom demandé.
+function normalizeFdName(s){ return String(s||'').trim().toLowerCase(); }
+function canonicalFdIndex(name){
+  const norm = normalizeFdName(name);
+  for(let i=0;i<FORCE_DISPOSITIONS.length;i++){
+    if(normalizeFdName(FORCE_DISPOSITIONS[i])===norm) return i;
+    if(normalizeFdName(FD_LABELS_FR[FORCE_DISPOSITIONS[i]])===norm) return i;
+  }
+  return -1;
 }
 
-// Convertit l'objet plat {"FD A|||FD B": score, ...} renvoyé par Gemini en la matrice
-// 5x5 (tableau de tableaux) attendue par state.fdMatrix, en bornant chaque valeur à
-// [-2, 2] et en retombant sur 0 pour toute paire manquante ou invalide.
-// Convertit l'objet plat {"FD A|||FD B": score, ...} renvoyé par Gemini en la matrice
-// 5x5 (tableau de tableaux) attendue par state.fdMatrix.
-// Contrairement au tableau meta faction vs faction (calculé par une formule
-// pa-pb qui garantit mathématiquement score(A,B) = -score(B,A)), Gemini répond ici
-// case par case pour chaque sens indépendamment — rien ne garantit que "A face à B"
-// et "B face à A" soient cohérents entre eux (ex: A donné +2 contre B, mais B aussi
-// donné +1 contre A). Pour que la grille FD suive la MÊME logique que les autres
-// tableaux (score des lignes face aux colonnes, cohérent et symétrique en miroir),
-// on moyenne les deux valeurs indépendantes de chaque paire et on ne garde qu'un
-// score net, dérivé en miroir sur l'autre case : matrix[A][B] = score net,
-// matrix[B][A] = -score net. La diagonale (A face à A) reste toujours à 0.
+// Convertit la réponse de Gemini pour la grille FD en matrice 5x5, en acceptant deux
+// formats (le modèle ne respecte pas toujours le format demandé au caractère près) :
+// - imbriqué : {"FD A": {"FD B": score, ...}, ...} (format demandé en priorité, plus
+//   robuste qu'une clé plate car aucun séparateur exact à respecter)
+// - plat : {"FD A|||FD B": score, ...} (toujours accepté en secours)
+// Les noms de FD sont comparés de façon tolérante (accents/espaces/casse, anglais ou
+// français) via canonicalFdIndex. Comme pour le tableau faction, on force la cohérence
+// ligne/colonne : la note nette de A face à B est le miroir exact de celle de B face à A
+// (moyenne des deux réponses indépendantes de l'IA quand les deux sont disponibles).
+// Retourne aussi le nombre de paires effectivement reconnues, pour détecter un échec de
+// parsing (matrice resterait à 0 partout) plutôt que de l'appliquer silencieusement.
 function buildFdMatrixFromObject(obj){
   obj = obj || {};
   const n = FORCE_DISPOSITIONS.length;
   const matrix = Array.from({length:n}, ()=>Array(n).fill(0));
-  const readScore = (a,b)=>{
-    const raw = obj[factionMetaKey(a,b)];
-    const v = typeof raw === 'number' ? raw : parseFloat(raw);
-    return isFinite(v) ? v : 0;
-  };
+  // Met à plat les deux formats possibles vers un unique dictionnaire "A|||B" -> valeur.
+  const flat = {};
+  Object.keys(obj).forEach(k=>{
+    const v = obj[k];
+    if(v && typeof v==='object' && !Array.isArray(v)){
+      Object.keys(v).forEach(k2=>{ flat[k+'|||'+k2] = v[k2]; });
+    } else {
+      flat[k] = v;
+    }
+  });
+  // Index toutes les clés plates une seule fois vers (indexA, indexB) reconnus, pour
+  // éviter de rescanner tout l'objet à chaque paire.
+  const resolved = {}; // "i|||j" -> valeur numérique
+  Object.keys(flat).forEach(k=>{
+    const sep = k.indexOf('|||');
+    if(sep<0) return;
+    const ia = canonicalFdIndex(k.slice(0,sep));
+    const ib = canonicalFdIndex(k.slice(sep+3));
+    if(ia<0 || ib<0) return;
+    const raw = flat[k];
+    const v = typeof raw==='number' ? raw : parseFloat(raw);
+    if(!isFinite(v)) return;
+    resolved[ia+'|||'+ib] = v;
+  });
+  let matchedPairs = 0;
   for(let i=0;i<n;i++){
     for(let j=i+1;j<n;j++){
-      const a = FORCE_DISPOSITIONS[i], b = FORCE_DISPOSITIONS[j];
-      const vAB = readScore(a,b);
-      const vBA = readScore(b,a);
-      // vAB = avantage de A sur B ; vBA = avantage de B sur A (donc -vBA aussi un avis
-      // sur l'avantage de A sur B) : la moyenne des deux lisse les incohérences de l'IA.
-      const net = Math.max(-2, Math.min(2, Math.round((vAB - vBA) / 2)));
+      const vAB = resolved[i+'|||'+j];
+      const vBA = resolved[j+'|||'+i];
+      if(vAB===undefined && vBA===undefined) continue;
+      matchedPairs++;
+      const net = Math.max(-2, Math.min(2, Math.round(((vAB||0) - (vBA||0)) / (vAB!==undefined && vBA!==undefined ? 2 : 1))));
       matrix[i][j] = net;
       matrix[j][i] = -net;
     }
   }
-  return matrix;
+  return { matrix, matchedPairs, totalPairs: n*(n-1)/2 };
 }
 
 // Interroge Gemini et renvoie { factionPower, fdMatrix } (ou null en cas d'échec /
@@ -1462,12 +1481,11 @@ async function fetchMetaRefreshFromGemini(statusEl, btn){
   try{
     const factionList = FACTION_ORDER.join(', ');
     const fdList = FORCE_DISPOSITIONS.join(', ');
-    const fdKeyList = fdMatrixKeyList().join(', ');
     const prompt = `Cherche des données récentes de méta compétitive Warhammer 40k V11 (résultats de tournois agrégés type Best Coast Pairings, Listhammer, ITC, Goonhammer, Warp Friends, Stat Check...). Réponds en deux parties, sous la forme d'UN SEUL objet JSON valide avec exactement deux clés "factionPower" et "fdMatrix", sans aucun texte avant ou après, sans balises markdown, sans commentaire, et sans jamais préfixer un nombre positif par le signe + (écris 1 et non +1).
 
 1) "factionPower" : pour chacune des factions suivantes, un score de niveau de puissance actuel dans la méta, de -3 (très faible, win rate nettement sous 50%) à +3 (très fort, win rate nettement au-dessus de 50% / domine la méta), basé sur les win rates de tournoi les plus récents que tu trouves. Factions (utilise exactement ces noms comme clés) : ${factionList}. Format : {"NomDeFaction": score, ...} pour CHAQUE faction listée.
 
-2) "fdMatrix" : les 5 Force Dispositions introduites par le Chapter Approved 2026-27 (V11) sont : ${fdList}. En te basant sur les résultats de tournois disputés depuis leur introduction (win rate observé quand la Force Disposition A affronte la Force Disposition B, toutes listes confondues), donne un score de -2 (A nettement désavantagée face à B) à +2 (A nettement avantagée face à B) pour CHACUNE des ${FORCE_DISPOSITIONS.length*FORCE_DISPOSITIONS.length} paires ordonnées suivantes (clé = "A|||B", avec exactement ce séparateur triple pipe) : ${fdKeyList}. Une paire identique (A|||A) vaut 0. Si tu ne trouves pas assez de données de tournoi pour distinguer certaines paires, mets 0 plutôt que d'inventer un score.
+2) "fdMatrix" : les 5 Force Dispositions introduites par le Chapter Approved 2026-27 (V11) sont : ${fdList}. En te basant sur les résultats de tournois disputés depuis leur introduction (win rate observé quand la Force Disposition A affronte la Force Disposition B, toutes listes confondues), donne un score de -2 (A nettement désavantagée face à B) à +2 (A nettement avantagée face à B) pour CHAQUE Force Disposition A face à CHACUNE des 4 autres Force Dispositions B. Utilise IMPÉRATIVEMENT cette structure JSON imbriquée (une sous-clé par FD adverse, PAS de clé combinée avec un séparateur) : {"Take and Hold": {"Purge the Foe": score, "Reconnaissance": score, "Disruption": score, "Priority Assets": score}, "Purge the Foe": {"Take and Hold": score, ...}, ...} en répétant ce schéma pour les 5 Force Dispositions comme clé de premier niveau (utilise EXACTEMENT ces noms anglais, sans traduction : ${fdList}). Si tu ne trouves pas assez de données de tournoi pour distinguer certaines paires, mets 0 plutôt que d'inventer un score — mais essaie de renseigner toutes les paires, ce tableau ne doit pas rester vide.
 
 Format final attendu : {"factionPower": {...}, "fdMatrix": {...}}`;
     const response = await fetch(
@@ -1500,24 +1518,45 @@ Format final attendu : {"factionPower": {...}, "fdMatrix": {...}}`;
 
 // Applique le résultat d'un rafraîchissement à TOUT ce qui en dépend : le tableau de
 // puissance par faction (onglet Configuration, utilisé pour générer le roster), le
-// tableau de suggestion de matchups faction vs faction (onglet Matchups), ET la grille
-// d'affinité par Force Disposition (onglet Matchups) — les trois sont désormais
-// rafraîchis ensemble, donc le faire depuis l'un des deux boutons met tout à jour.
-// La grille FD reste éditable à la main ensuite : un rafraîchissement ultérieur écrase
-// à nouveau les valeurs, mais entre-temps elle se comporte comme n'importe quel tableau
-// manuel (cases cliquables, valeurs conservées à la sauvegarde/export).
+// tableau de suggestion de matchups faction vs faction (onglet Matchups), la grille
+// d'affinité par Force Disposition (onglet Matchups), ET — point important — la
+// matrice de matchup PAR JOUEUR (moi × adversaire) de CHAQUE équipe adverse déjà
+// configurée : sans ça, ces cases restaient figées sur l'ancienne valeur après un
+// rafraîchissement, alors que le tableau meta au-dessus affichait déjà la nouvelle,
+// ce qui produisait des incohérences (ex: tableau meta Space Wolves vs Adeptus
+// Custodes à -2, mais Poilu vs Kael resté à +2 faute de resynchronisation).
+// La grille FD et les matrices de matchup par joueur restent éditables à la main
+// ensuite : un rafraîchissement ultérieur écrase à nouveau tout, mais entre-temps
+// elles se comportent comme n'importe quel tableau manuel.
 function applyMetaRefreshResult(result, label){
   result = result || {};
   state.factionPower = Object.assign({}, FACTION_POWER, result.factionPower || {});
   state.factionMeta = buildDefaultFactionMeta(state.factionPower);
   state.factionMetaUpdatedLabel = label;
-  if(result.fdMatrix && Object.keys(result.fdMatrix).length){
-    state.fdMatrix = buildFdMatrixFromObject(result.fdMatrix);
-    state.fdMatrixUpdatedLabel = label;
+
+  const fdResult = buildFdMatrixFromObject(result.fdMatrix);
+  if(fdResult.matchedPairs > 0){
+    state.fdMatrix = fdResult.matrix;
+    const partial = fdResult.matchedPairs < fdResult.totalPairs;
+    state.fdMatrixUpdatedLabel = label + (partial ? ` (${fdResult.matchedPairs}/${fdResult.totalPairs} paires reconnues dans la réponse, le reste à 0)` : '');
+  } else {
+    // Aucune paire reconnue : la réponse de Gemini n'a pas pu être exploitée pour cette
+    // grille (format inattendu). On NE l'écrase PAS avec une matrice vide : on garde la
+    // dernière valeur connue et on prévient clairement, plutôt que de laisser la grille
+    // retomber silencieusement à zéro partout.
+    state.fdMatrixUpdatedLabel = "Échec du rafraîchissement de cette grille (réponse IA illisible) — dernières valeurs conservées (" + (state.fdMatrixUpdatedLabel || FD_MATRIX_DEFAULT_LABEL) + "). Réessaie, ou ajuste les cases à la main.";
   }
+
+  // Resynchronise la matrice de matchup par joueur de TOUTES les équipes adverses déjà
+  // configurées avec le tableau meta fraîchement rafraîchi (overwrite total : c'est le
+  // sens même d'un rafraîchissement de la méta).
+  state.oppTeams.forEach(ot=>{ applyFactionMetaToTeam(ot, true); });
+
   renderFactionPowerTable();
   renderFactionMetaMatrix();
   renderFdMatrix();
+  renderMatchupMatrix();
+  renderLive();
 }
 
 async function refreshFactionMetaViaAI(){
@@ -1526,7 +1565,7 @@ async function refreshFactionMetaViaAI(){
   if(!statusEl || !btn) return;
   const result = await fetchMetaRefreshFromGemini(statusEl, btn);
   if(!result) return;
-  const ok = confirm("Le tableau meta faction vs faction, le niveau de puissance par faction (onglet Configuration) ET le tableau d'affinité par Force Disposition (ci-dessous) vont être recalculés à partir des données trouvées en ligne à l'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
+  const ok = confirm("Le tableau meta faction vs faction, le niveau de puissance par faction (onglet Configuration), le tableau d'affinité par Force Disposition (ci-dessous) ET les matrices de matchup par joueur de TOUTES les équipes adverses déjà configurées vont être recalculés à partir des données trouvées en ligne à l'instant, pour rester cohérents entre eux. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
   if(!ok){ statusEl.textContent = 'Rafraîchissement annulé.'; return; }
   const label = 'Rafraîchi via Gemini le ' + new Date().toLocaleString('fr-FR');
   applyMetaRefreshResult(result, label);
@@ -1539,7 +1578,7 @@ async function refreshFactionPowerViaAI(){
   if(!statusEl || !btn) return;
   const result = await fetchMetaRefreshFromGemini(statusEl, btn);
   if(!result) return;
-  const ok = confirm("Le niveau de puissance par faction, le tableau meta faction vs faction (onglet Matchups) ET le tableau d'affinité par Force Disposition (onglet Matchups) vont être recalculés à partir des données trouvées en ligne à l'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
+  const ok = confirm("Le niveau de puissance par faction, le tableau meta faction vs faction (onglet Matchups), le tableau d'affinité par Force Disposition (onglet Matchups) ET les matrices de matchup par joueur de TOUTES les équipes adverses déjà configurées vont être recalculés à partir des données trouvées en ligne à l'instant, pour rester cohérents entre eux. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
   if(!ok){ statusEl.textContent = 'Rafraîchissement annulé.'; return; }
   const label = 'Rafraîchi via Gemini le ' + new Date().toLocaleString('fr-FR');
   applyMetaRefreshResult(result, label);
