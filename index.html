@@ -506,8 +506,9 @@
     </details>
 
     <h2 class="section-title">Affinité par Force Disposition</h2>
-    <div class="hint">Les 5 Force Dispositions du Chapter Approved 2026-27 (Prise de Position, Purge de l'Ennemi, Reconnaissance, Perturbation, Points Stratégiques — noms officiels FR à confirmer par GW). Note de -2 à +2 à quel point ta disposition prend l'avantage sur celle de l'adversaire, indépendamment des listes. Tu peux baser ces valeurs sur des résultats de tournois déjà disputés (win rate observé FD contre FD) plutôt que sur une simple intuition. Optionnel, laisse à 0 si tu préfères t'en tenir au seul matchup de listes.</div>
+    <div class="hint">Les 5 Force Dispositions du Chapter Approved 2026-27 (Prise de Position, Purge de l'Ennemi, Reconnaissance, Perturbation, Points Stratégiques — noms officiels FR à confirmer par GW). Note de -2 à +2 à quel point ta disposition prend l'avantage sur celle de l'adversaire, indépendamment des listes. Ce tableau est rempli automatiquement (win rate observé FD contre FD, agrégé sur les tournois disputés depuis le lancement de la V11) à chaque clic sur « 🔎 Rafraîchir la méta » (onglet Configuration ou onglet Matchups) ; tu peux ensuite ajuster chaque case à la main — tes réglages manuels sont conservés jusqu'au prochain rafraîchissement. Optionnel, laisse à 0 si tu préfères t'en tenir au seul matchup de listes.</div>
     <div class="matrix-wrap"><table class="matrix" id="fdMatrix"></table></div>
+    <div class="hint" id="fdMatrixStatus" style="margin-top:8px;"></div>
   </div>
 
   <!-- LIVE -->
@@ -646,6 +647,10 @@ const FACTION_POWER = {
   'Necrons': 1, 'Orks': 2, "T'au Empire": 1, 'Tyranids': 0
 };
 const FACTION_POWER_SNAPSHOT_DATE = 'mi-juillet 2026';
+// Label par défaut du tableau d'affinité par Force Disposition tant qu'il n'a jamais été
+// rafraîchi via Gemini : la matrice de base reste neutre (que des 0), contrairement au
+// niveau de puissance par faction qui part d'un instantané figé.
+const FD_MATRIX_DEFAULT_LABEL = "Valeurs neutres par défaut — jamais rafraîchi";
 const FACTION_ORDER = [].concat(...Object.values(FACTIONS_GROUPED));
 
 // Règle des tournois en équipe (WTC / ETC / FEQ, formats 6 et 8 joueurs) :
@@ -699,6 +704,7 @@ let state = {
   tables: Array.from({length:TEAM_SIZE}, (_,i)=>({mission:'', notes:''})),
   myFit: Array.from({length:TEAM_SIZE}, ()=>Array(TEAM_SIZE).fill(0)),
   fdMatrix: Array.from({length:5}, ()=>Array(5).fill(0)),
+  fdMatrixUpdatedLabel: FD_MATRIX_DEFAULT_LABEL,
   factionMeta: buildDefaultFactionMeta(),
   factionMetaUpdatedLabel: 'Estimation de départ (' + FACTION_POWER_SNAPSHOT_DATE + ')',
   factionPower: Object.assign({}, FACTION_POWER),
@@ -1386,11 +1392,38 @@ function extractJsonObject(text){
 }
 
 /* ---------- Rafraîchissement de la méta via Gemini (clé API perso, recherche web) ---------- */
-// Interroge Gemini et renvoie le score de puissance par faction (ou null en cas d'échec /
-// annulation). Ne touche pas au state : appelée depuis l'onglet Matchups ET l'onglet
-// Configuration, chacun avec son propre bouton/statut, mais le résultat alimente ensuite
-// les deux à la fois via applyFactionPowerLevels ci-dessous.
-async function fetchFactionPowerLevelsFromGemini(statusEl, btn){
+// Construit la liste des clés attendues pour la matrice FD × FD, au même format
+// "A|||B" que factionMetaKey (réutilisé pour parser/appliquer la réponse de Gemini).
+function fdMatrixKeyList(){
+  const keys = [];
+  FORCE_DISPOSITIONS.forEach(a=>{
+    FORCE_DISPOSITIONS.forEach(b=>{
+      keys.push(factionMetaKey(a,b));
+    });
+  });
+  return keys;
+}
+
+// Convertit l'objet plat {"FD A|||FD B": score, ...} renvoyé par Gemini en la matrice
+// 5x5 (tableau de tableaux) attendue par state.fdMatrix, en bornant chaque valeur à
+// [-2, 2] et en retombant sur 0 pour toute paire manquante ou invalide.
+function buildFdMatrixFromObject(obj){
+  obj = obj || {};
+  return FORCE_DISPOSITIONS.map(a=>FORCE_DISPOSITIONS.map(b=>{
+    const raw = obj[factionMetaKey(a,b)];
+    const n = typeof raw === 'number' ? raw : parseFloat(raw);
+    if(!isFinite(n)) return 0;
+    return Math.max(-2, Math.min(2, Math.round(n)));
+  }));
+}
+
+// Interroge Gemini et renvoie { factionPower, fdMatrix } (ou null en cas d'échec /
+// annulation). Un seul appel couvre les deux jeux de données, puisqu'on veut de toute
+// façon les rafraîchir ensemble. Ne touche pas au state : appelée depuis l'onglet
+// Matchups ET l'onglet Configuration, chacun avec son propre bouton/statut, mais le
+// résultat alimente ensuite les deux à la fois (+ la grille Force Disposition, onglet
+// Matchups) via applyMetaRefreshResult ci-dessous.
+async function fetchMetaRefreshFromGemini(statusEl, btn){
   if(!statusEl || !btn) return null;
   const apiKey = loadGeminiSettings().apiKey;
   if(!apiKey){
@@ -1403,7 +1436,15 @@ async function fetchFactionPowerLevelsFromGemini(statusEl, btn){
   statusEl.textContent = 'Interrogation de Gemini (recherche web sur les tournois récents)… ça peut prendre 10-30 secondes.';
   try{
     const factionList = FACTION_ORDER.join(', ');
-    const prompt = `Cherche des données récentes de méta compétitive Warhammer 40k (résultats de tournois agrégés type Best Coast Pairings, Listhammer, ITC, Goonhammer, Warp Friends, Stat Check...). Pour chacune des factions suivantes, donne un score de niveau de puissance actuel dans la méta, de -3 (très faible, win rate nettement sous 50%) à +3 (très fort, win rate nettement au-dessus de 50% / domine la méta), basé sur les win rates de tournoi les plus récents que tu trouves. Factions (utilise exactement ces noms comme clés) : ${factionList}. Réponds UNIQUEMENT avec un objet JSON valide de la forme {"NomDeFaction": score, ...} pour CHAQUE faction listée, sans aucun texte avant ou après, sans balises markdown, sans commentaire, et sans jamais préfixer un nombre positif par le signe + (écris 1 et non +1).`;
+    const fdList = FORCE_DISPOSITIONS.join(', ');
+    const fdKeyList = fdMatrixKeyList().join(', ');
+    const prompt = `Cherche des données récentes de méta compétitive Warhammer 40k V11 (résultats de tournois agrégés type Best Coast Pairings, Listhammer, ITC, Goonhammer, Warp Friends, Stat Check...). Réponds en deux parties, sous la forme d'UN SEUL objet JSON valide avec exactement deux clés "factionPower" et "fdMatrix", sans aucun texte avant ou après, sans balises markdown, sans commentaire, et sans jamais préfixer un nombre positif par le signe + (écris 1 et non +1).
+
+1) "factionPower" : pour chacune des factions suivantes, un score de niveau de puissance actuel dans la méta, de -3 (très faible, win rate nettement sous 50%) à +3 (très fort, win rate nettement au-dessus de 50% / domine la méta), basé sur les win rates de tournoi les plus récents que tu trouves. Factions (utilise exactement ces noms comme clés) : ${factionList}. Format : {"NomDeFaction": score, ...} pour CHAQUE faction listée.
+
+2) "fdMatrix" : les 5 Force Dispositions introduites par le Chapter Approved 2026-27 (V11) sont : ${fdList}. En te basant sur les résultats de tournois disputés depuis leur introduction (win rate observé quand la Force Disposition A affronte la Force Disposition B, toutes listes confondues), donne un score de -2 (A nettement désavantagée face à B) à +2 (A nettement avantagée face à B) pour CHACUNE des ${FORCE_DISPOSITIONS.length*FORCE_DISPOSITIONS.length} paires ordonnées suivantes (clé = "A|||B", avec exactement ce séparateur triple pipe) : ${fdKeyList}. Une paire identique (A|||A) vaut 0. Si tu ne trouves pas assez de données de tournoi pour distinguer certaines paires, mets 0 plutôt que d'inventer un score.
+
+Format final attendu : {"factionPower": {...}, "fdMatrix": {...}}`;
     const response = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + encodeURIComponent(apiKey),
       {
@@ -1432,28 +1473,38 @@ async function fetchFactionPowerLevelsFromGemini(statusEl, btn){
   }
 }
 
-// Applique un jeu de scores de puissance par faction à TOUT ce qui en dépend : le tableau
-// de puissance par faction (onglet Configuration, utilisé pour générer le roster) ET le
-// tableau de suggestion de matchups (onglet Matchups) — les deux sont dérivés de la même
-// donnée, donc rafraîchir depuis l'un des deux onglets met aussi l'autre à jour.
-function applyFactionPowerLevels(powerLevels, label){
-  state.factionPower = Object.assign({}, FACTION_POWER, powerLevels);
+// Applique le résultat d'un rafraîchissement à TOUT ce qui en dépend : le tableau de
+// puissance par faction (onglet Configuration, utilisé pour générer le roster), le
+// tableau de suggestion de matchups faction vs faction (onglet Matchups), ET la grille
+// d'affinité par Force Disposition (onglet Matchups) — les trois sont désormais
+// rafraîchis ensemble, donc le faire depuis l'un des deux boutons met tout à jour.
+// La grille FD reste éditable à la main ensuite : un rafraîchissement ultérieur écrase
+// à nouveau les valeurs, mais entre-temps elle se comporte comme n'importe quel tableau
+// manuel (cases cliquables, valeurs conservées à la sauvegarde/export).
+function applyMetaRefreshResult(result, label){
+  result = result || {};
+  state.factionPower = Object.assign({}, FACTION_POWER, result.factionPower || {});
   state.factionMeta = buildDefaultFactionMeta(state.factionPower);
   state.factionMetaUpdatedLabel = label;
+  if(result.fdMatrix && Object.keys(result.fdMatrix).length){
+    state.fdMatrix = buildFdMatrixFromObject(result.fdMatrix);
+    state.fdMatrixUpdatedLabel = label;
+  }
   renderFactionPowerTable();
   renderFactionMetaMatrix();
+  renderFdMatrix();
 }
 
 async function refreshFactionMetaViaAI(){
   const statusEl = document.getElementById('factionMetaStatus');
   const btn = document.getElementById('refreshFactionMetaBtn');
   if(!statusEl || !btn) return;
-  const powerLevels = await fetchFactionPowerLevelsFromGemini(statusEl, btn);
-  if(!powerLevels) return;
-  const ok = confirm('Le tableau meta faction vs faction ET le niveau de puissance par faction (onglet Configuration) vont être recalculés à partir des données trouvées en ligne à l\'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?');
+  const result = await fetchMetaRefreshFromGemini(statusEl, btn);
+  if(!result) return;
+  const ok = confirm("Le tableau meta faction vs faction, le niveau de puissance par faction (onglet Configuration) ET le tableau d'affinité par Force Disposition (ci-dessous) vont être recalculés à partir des données trouvées en ligne à l'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
   if(!ok){ statusEl.textContent = 'Rafraîchissement annulé.'; return; }
   const label = 'Rafraîchi via Gemini le ' + new Date().toLocaleString('fr-FR');
-  applyFactionPowerLevels(powerLevels, label);
+  applyMetaRefreshResult(result, label);
   statusEl.textContent = label + ' (recherche web).';
 }
 
@@ -1461,12 +1512,12 @@ async function refreshFactionPowerViaAI(){
   const statusEl = document.getElementById('factionPowerStatus');
   const btn = document.getElementById('refreshFactionPowerBtn');
   if(!statusEl || !btn) return;
-  const powerLevels = await fetchFactionPowerLevelsFromGemini(statusEl, btn);
-  if(!powerLevels) return;
-  const ok = confirm('Le niveau de puissance par faction ET le tableau meta faction vs faction (onglet Matchups) vont être recalculés à partir des données trouvées en ligne à l\'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?');
+  const result = await fetchMetaRefreshFromGemini(statusEl, btn);
+  if(!result) return;
+  const ok = confirm("Le niveau de puissance par faction, le tableau meta faction vs faction (onglet Matchups) ET le tableau d'affinité par Force Disposition (onglet Matchups) vont être recalculés à partir des données trouvées en ligne à l'instant. Les valeurs que tu as ajustées à la main seront écrasées. Continuer ?");
   if(!ok){ statusEl.textContent = 'Rafraîchissement annulé.'; return; }
   const label = 'Rafraîchi via Gemini le ' + new Date().toLocaleString('fr-FR');
-  applyFactionPowerLevels(powerLevels, label);
+  applyMetaRefreshResult(result, label);
   statusEl.textContent = label + ' (recherche web).';
 }
 
@@ -1488,6 +1539,8 @@ function fdShortLabels(){
 }
 function renderFdMatrix(){
   renderMatrix('fdMatrix', fdShortLabels(), fdShortLabels(), state.fdMatrix, -2, 2, renderLive);
+  const statusEl = document.getElementById('fdMatrixStatus');
+  if(statusEl) statusEl.textContent = (state.fdMatrixUpdatedLabel || FD_MATRIX_DEFAULT_LABEL) + '.';
 }
 
 /* ---------- Live pairing ---------- */
@@ -2009,6 +2062,7 @@ function applyLoadedState(loaded){
   if(!state.factionMetaUpdatedLabel) state.factionMetaUpdatedLabel = 'Estimation de départ (' + FACTION_POWER_SNAPSHOT_DATE + ')';
   if(!state.factionPower || Object.keys(state.factionPower).length===0) state.factionPower = Object.assign({}, FACTION_POWER);
   if(!state.fdMatrix || !state.fdMatrix.length) state.fdMatrix = Array.from({length:5}, ()=>Array(5).fill(0));
+  if(!state.fdMatrixUpdatedLabel) state.fdMatrixUpdatedLabel = FD_MATRIX_DEFAULT_LABEL;
   if(!state.pairing || !state.pairing.length) state.pairing = Array.from({length:TEAM_SIZE}, ()=>({myList:null, oppList:null, myScore:null, oppScore:null, oppCandidates:[null,null]}));
   state.pairing.forEach(p=>{
     if(p.myScore===undefined) p.myScore = null;
@@ -2069,6 +2123,7 @@ document.getElementById('clearStorageBtn').addEventListener('click', ()=>{
     tables: Array.from({length:TEAM_SIZE}, ()=>({mission:'', notes:''})),
     myFit: Array.from({length:TEAM_SIZE}, ()=>Array(TEAM_SIZE).fill(0)),
     fdMatrix: Array.from({length:5}, ()=>Array(5).fill(0)),
+    fdMatrixUpdatedLabel: FD_MATRIX_DEFAULT_LABEL,
     factionMeta: buildDefaultFactionMeta(),
     factionMetaUpdatedLabel: 'Estimation de départ (' + FACTION_POWER_SNAPSHOT_DATE + ')',
     factionPower: Object.assign({}, FACTION_POWER),
