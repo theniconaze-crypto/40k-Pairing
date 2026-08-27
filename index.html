@@ -274,6 +274,26 @@
   .live-opp-row{display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap;}
   .live-opp-row label{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--bone-dim); text-transform:uppercase; letter-spacing:.05em;}
 
+  /* PDF attachment (per opponent team) */
+  .opp-pill-wrap{display:inline-flex; align-items:stretch;}
+  .opp-pill-pdf{
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:13px; color:var(--brass-bright); background:var(--bg-panel);
+    border:1px solid var(--line); border-left:none; padding:0 8px;
+    text-decoration:none; cursor:pointer;
+  }
+  .opp-pill-pdf:hover{color:var(--bone); border-color:var(--brass);}
+  .pdf-link{
+    font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--brass-bright);
+    text-decoration:none; border:1px solid var(--brass); padding:6px 10px;
+    white-space:nowrap; max-width:220px; overflow:hidden; text-overflow:ellipsis;
+  }
+  .pdf-link:hover{color:var(--bone); border-color:var(--brass-bright); background:var(--bg-raised);}
+  .opp-team-pdf-row{display:flex; align-items:center; gap:10px; margin:0 0 14px; flex-wrap:wrap;}
+  .opp-team-pdf-row .btn.secondary{width:auto; font-size:11.5px; padding:7px 12px;}
+  .opp-team-pdf-row .btn.danger{width:auto; font-size:11px; padding:5px 10px; background:transparent; border:1px solid var(--red); color:var(--red-bright);}
+  .opp-team-pdf-row .btn.danger:hover{background:var(--red); color:var(--bone);}
+
   /* ---------- Auth / Login ---------- */
   #loginOverlay{
     position:fixed; inset:0; background:var(--bg); z-index:9999;
@@ -536,6 +556,7 @@
     <div class="live-opp-row">
       <label for="liveOppSelect">Adversaire de ce round :</label>
       <select id="liveOppSelect"></select>
+      <a href="#" id="liveOppPdfLink" class="pdf-link" style="display:none;">📄</a>
     </div>
     <div class="mode-row">
       <label>Stratégie de recommandation :</label>
@@ -727,7 +748,12 @@ function makeOppTeam(n){
     // Pairing en direct (et résultats réels associés) PROPRE à cette équipe adverse : ainsi,
     // changer d'adversaire dans l'onglet « Pairing en direct » ou dans l'onglet « Résultats »
     // ne fait plus jamais perdre la progression déjà saisie — on peut reprendre plus tard.
-    pairing: makePairingArray()
+    pairing: makePairingArray(),
+    // PDF optionnel attaché à cette équipe adverse (roster officiel, liste d'armée...) :
+    // stocké en base64 (data URL) pour rester 100% local, sans backend. pdfData vaut null
+    // tant qu'aucun fichier n'a été attaché.
+    pdfName: null,
+    pdfData: null
   };
 }
 
@@ -748,6 +774,34 @@ let state = {
 };
 
 function fdIndex(fd){ return FORCE_DISPOSITIONS.indexOf(fd); }
+
+// Ouvre un PDF stocké en data URL (base64) dans un nouvel onglet. On ne met PAS
+// directement la data URL en href/window.open : la plupart des navigateurs (Chrome en
+// tête) bloquent ou affichent une page blanche quand on navigue vers une data: URL,
+// surtout volumineuse, depuis un clic. On convertit donc à la volée en Blob + URL
+// objet (blob:), que tous les navigateurs savent ouvrir correctement dans un nouvel
+// onglet — l'URL objet est révoquée après un délai pour libérer la mémoire.
+function openPdfDataUrl(dataUrl){
+  if(!dataUrl) return;
+  try{
+    const commaIdx = dataUrl.indexOf(',');
+    const meta = dataUrl.slice(0, commaIdx);
+    const isBase64 = /;base64/i.test(meta);
+    const raw = dataUrl.slice(commaIdx+1);
+    const byteString = isBase64 ? atob(raw) : decodeURIComponent(raw);
+    const bytes = new Uint8Array(byteString.length);
+    for(let i=0;i<byteString.length;i++) bytes[i] = byteString.charCodeAt(i);
+    const blob = new Blob([bytes], {type:'application/pdf'});
+    const blobUrl = URL.createObjectURL(blob);
+    const win = window.open(blobUrl, '_blank');
+    if(!win){
+      alert("Le navigateur a bloqué l'ouverture du PDF (pop-up bloquée). Autorise les pop-ups pour ce site puis réessaie.");
+    }
+    setTimeout(()=>URL.revokeObjectURL(blobUrl), 60000);
+  }catch(err){
+    alert("Impossible d'ouvrir ce PDF (fichier corrompu ou trop volumineux).");
+  }
+}
 function activeOppTeam(){ return state.oppTeams[state.activeOppIdx]; }
 function liveOppTeam(){ return state.oppTeams[state.liveOppIdx]; }
 function resultsOppTeam(){ return state.oppTeams[state.resultsOppIdx]; }
@@ -1002,11 +1056,24 @@ function renderOppTeamTabsInto(containerId){
   if(!el) return;
   el.innerHTML='';
   state.oppTeams.forEach((ot,idx)=>{
+    const wrap=document.createElement('span');
+    wrap.className='opp-pill-wrap';
     const btn=document.createElement('button');
     btn.className='opp-pill'+(idx===state.activeOppIdx?' active':'');
     btn.textContent = ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1));
     btn.addEventListener('click', ()=>{ state.activeOppIdx = idx; renderAll(); });
-    el.appendChild(btn);
+    wrap.appendChild(btn);
+    // Lien direct vers le PDF attaché à cette équipe adverse (roster/liste), s'il y en a un.
+    if(ot.pdfData){
+      const a=document.createElement('a');
+      a.className='opp-pill-pdf';
+      a.href='#';
+      a.title='Ouvrir le PDF — ' + (ot.pdfName || (ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1))));
+      a.textContent='📄';
+      a.addEventListener('click', e=>{ e.preventDefault(); openPdfDataUrl(ot.pdfData); });
+      wrap.appendChild(a);
+    }
+    el.appendChild(wrap);
   });
   const addBtn=document.createElement('button');
   addBtn.className='opp-pill add';
@@ -1025,6 +1092,17 @@ function renderOppTeamPanel(){
       <input type="text" id="oppTeamNameInput" value="${ot.name||''}" placeholder="Nom de l'équipe adverse">
       <button class="btn danger" id="oppTeamDeleteBtn" ${state.oppTeams.length<=1?'disabled':''}>Supprimer cette équipe</button>
     </div>
+    <div class="opp-team-pdf-row">
+      <label class="btn secondary" for="oppTeamPdfInput" style="cursor:pointer;">
+        📎 ${ot.pdfData ? 'Remplacer le PDF' : 'Attacher un PDF'}
+      </label>
+      <input type="file" id="oppTeamPdfInput" accept="application/pdf" style="display:none;">
+      ${ot.pdfData ? `
+        <a href="#" id="oppTeamPdfLink" class="pdf-link" title="${escapeHtmlAuth(ot.pdfName||'')}">📄 ${escapeHtmlAuth(ot.pdfName||'document.pdf')}</a>
+        <button class="btn danger" id="oppTeamPdfRemoveBtn">Retirer le PDF</button>
+      ` : ''}
+    </div>
+    <div class="hint" style="margin:-8px 0 12px;">Le PDF (roster officiel, liste d'armée, etc.) est stocké uniquement sur cet appareil et apparaît ensuite en lien cliquable à côté du nom de cette équipe dans les onglets « Matchups » et « Pairing en direct ». Il est inclus dans l'export/import JSON de configuration ; garde à l'esprit qu'un PDF volumineux alourdit ces fichiers et la sauvegarde automatique du navigateur.</div>
     <div class="roster-grid" id="oppRosterActive"></div>
   `;
   document.getElementById('oppTeamNameInput').addEventListener('input', e=>{
@@ -1036,6 +1114,37 @@ function renderOppTeamPanel(){
     renderResultsOppSelect();
   });
   document.getElementById('oppTeamDeleteBtn').addEventListener('click', ()=>removeOppTeam(idx));
+  const pdfLink = document.getElementById('oppTeamPdfLink');
+  if(pdfLink){
+    pdfLink.addEventListener('click', e=>{ e.preventDefault(); openPdfDataUrl(ot.pdfData); });
+  }
+  document.getElementById('oppTeamPdfInput').addEventListener('change', e=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    if(file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')){
+      alert('Merci de choisir un fichier PDF.');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = evt=>{
+      ot.pdfName = file.name;
+      ot.pdfData = evt.target.result;
+      renderAll();
+    };
+    reader.onerror = ()=>{ alert('Impossible de lire ce fichier.'); };
+    reader.readAsDataURL(file);
+  });
+  const removeBtn = document.getElementById('oppTeamPdfRemoveBtn');
+  if(removeBtn){
+    removeBtn.addEventListener('click', ()=>{
+      const ok = confirm(`Retirer le PDF attaché à « ${ot.name || 'cette équipe adverse'} » ?`);
+      if(!ok) return;
+      ot.pdfName = null;
+      ot.pdfData = null;
+      renderAll();
+    });
+  }
   renderRoster('oppRosterActive', ot.roster);
 }
 function renderLiveOppSelect(){
@@ -1045,6 +1154,24 @@ function renderLiveOppSelect(){
   sel.innerHTML = state.oppTeams.map((ot,idx)=>
     `<option value="${idx}" ${idx===prev?'selected':''}>${ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1))}</option>`
   ).join('');
+  updateLiveOppPdfLink();
+}
+// Lien cliquable vers le PDF (roster/liste) de l'équipe adverse actuellement sélectionnée
+// dans l'onglet « 4. Pairing en direct », affiché juste à côté du sélecteur. Masqué si
+// cette équipe n'a pas de PDF attaché (onglet Configuration).
+function updateLiveOppPdfLink(){
+  const link = document.getElementById('liveOppPdfLink');
+  if(!link) return;
+  const ot = liveOppTeam();
+  if(ot && ot.pdfData){
+    link.dataset.pdf = ot.pdfData;
+    link.textContent = '📄 ' + (ot.pdfName || 'Ouvrir le PDF');
+    link.title = ot.pdfName || '';
+    link.style.display = '';
+  } else {
+    delete link.dataset.pdf;
+    link.style.display = 'none';
+  }
 }
 // Sélecteur d'équipe adverse dédié à l'onglet « 5. Résultats Réels Pairing » : indépendant
 // du sélecteur de l'onglet « 4. Pairing en direct », pour pouvoir saisir les résultats
@@ -2168,7 +2295,14 @@ document.getElementById('liveOppSelect').addEventListener('change', e=>{
   // contente de changer d'onglet de pairing (le pairing déjà réalisé pour l'équipe
   // précédente reste intact et pourra être repris plus tard).
   state.liveOppIdx = newIdx;
+  updateLiveOppPdfLink();
   renderLive();
+});
+
+document.getElementById('liveOppPdfLink').addEventListener('click', e=>{
+  e.preventDefault();
+  const dataUrl = e.currentTarget.dataset.pdf;
+  if(dataUrl) openPdfDataUrl(dataUrl);
 });
 
 document.getElementById('resetPairing').addEventListener('click', ()=>{
@@ -2253,6 +2387,8 @@ function applyLoadedState(loaded){
   state.oppTeams.forEach((ot,idx)=>{
     ot.matchupMood = resizeMoodMatrixTo(ot.matchupMood, TEAM_SIZE);
     if(!ot.pairing || !ot.pairing.length) ot.pairing = makePairingArray();
+    if(ot.pdfName===undefined) ot.pdfName = null;
+    if(ot.pdfData===undefined) ot.pdfData = null;
     if(legacyPairing && legacyPairing.length && idx===(typeof state.liveOppIdx==='number'?state.liveOppIdx:0)){
       ot.pairing = resizeArrayTo(legacyPairing, TEAM_SIZE, ()=>({myList:null, oppList:null, myScore:null, oppScore:null, oppCandidates:[null,null]}));
     }
