@@ -388,9 +388,11 @@
     <h2 class="section-title" style="margin-top:0;">Gestion des comptes</h2>
     <div class="hint">
       Les comptes « utilisateur » créés ici ont accès à l'outil mais pas aux réglages de la clé API Gemini.
-      Cette protection est un simple filtre côté navigateur (pas une sécurité serveur) : toute personne ayant
-      accès au fichier HTML ou aux outils de développement du navigateur peut la contourner. Ne pas l'utiliser
-      pour protéger des données réellement sensibles.
+      Les comptes et mots de passe sont désormais gérés par Firebase Authentication (côté serveur) : ils sont
+      valables sur n'importe quel appareil, et un mot de passe n'est jamais visible en clair, y compris depuis
+      les outils de développement du navigateur. « Révoquer l'accès » supprime le profil de la personne (elle
+      ne peut plus se connecter), mais ne supprime pas le compte technique sous-jacent dans Firebase ; pour une
+      suppression complète, va dans la console Firebase → Authentication.
     </div>
     <div id="userAdminList"></div>
     <div class="useradmin-form">
@@ -611,25 +613,11 @@
   </div>
 
   <div class="toolbar" style="align-items:center;">
-    <button class="btn secondary" id="cloudPullBtn">🔄 Charger depuis le cloud</button>
-    <button class="btn secondary" id="cloudPushBtn">☁️ Envoyer vers le cloud</button>
-    <button class="btn secondary" id="toggleCloudSettingsBtn" style="display:none;">⚙️ Réglages Cloud</button>
+    <button class="btn secondary" id="cloudPullBtn">🔄 Forcer un rechargement depuis Firebase</button>
     <span id="cloudSyncIndicator" style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--bone-dim);margin-left:auto;"></span>
   </div>
-  <div id="cloudSettingsPanel" style="display:none;border:1px solid var(--line);border-radius:8px;padding:14px 16px;margin-top:-6px;margin-bottom:18px;background:rgba(255,255,255,0.02);">
-    <div class="hint" style="margin-top:0;">
-      Renseigne ici le Bin ID et une clé API <a href="https://jsonbin.io" target="_blank" rel="noopener" style="color:var(--brass-bright);">jsonbin.io</a> pour centraliser la configuration en ligne (au lieu de la ressaisir sur chaque appareil). Privilégie une <b>Access Key</b> limitée à ce seul bin (lecture + écriture) plutôt que la Master Key de ton compte. Cette clé part dans chaque requête réseau vers jsonbin.io : n'importe quel utilisateur connecté qui ouvre les outils de développement de son navigateur (onglet Réseau) peut la voir passer, même si elle n'est jamais affichée dans l'interface. Tout le monde (admin et utilisateurs) peut charger/envoyer les données une fois configuré ; seul l'admin peut modifier le Bin ID et la clé.
-    </div>
-    <label style="margin-top:10px;max-width:420px;">Bin ID jsonbin.io
-      <input type="text" id="cloudBinIdInput" placeholder="ex : 65fa1234abcd5678ef901234" autocomplete="off">
-    </label>
-    <label style="margin-top:10px;max-width:420px;">Clé API (Access Key recommandée, ou Master Key)
-      <input type="password" id="cloudApiKeyInput" autocomplete="off">
-    </label>
-    <div class="toolbar" style="margin-top:8px;">
-      <button class="btn secondary" id="saveCloudSettingsBtn">Enregistrer</button>
-      <span id="cloudSettingsSavedIndicator" style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--bone-dim);"></span>
-    </div>
+  <div class="hint" style="margin-top:-10px;">
+    Les données (rosters, matrices, pairing en cours) sont synchronisées automatiquement et en temps réel via Firebase entre tous les appareils connectés avec un compte actif. Le bouton ci-dessus force un rechargement manuel si besoin, mais ce n'est normalement pas nécessaire.
   </div>
 
   <div class="footer-note">
@@ -638,6 +626,38 @@
 
 </div>
 
+<!-- Firebase (compat build : utilisable directement dans un <script> classique, sans étape de build) -->
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
+<script>
+/* ================================================================================
+   FIREBASE — initialisation
+   -----------------------------------------------------------------------
+   Cette config est publique par nature (elle part dans le navigateur de chaque
+   utilisateur, on ne peut pas la "cacher"). La sécurité réelle vient des règles
+   Firestore + Firebase Authentication (voir la doc fournie séparément), pas du
+   secret de cette clé.
+================================================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyDyMhma-eghExIwxEDw03yrj44TXf2NLdE",
+  authDomain: "pairing40k.firebaseapp.com",
+  projectId: "pairing40k",
+  storageBucket: "pairing40k.firebasestorage.app",
+  messagingSenderId: "984526351348",
+  appId: "1:984526351348:web:7dbf4277146eeb538567a1",
+  measurementId: "G-GZPVDPGPLW"
+};
+const fbApp = firebase.initializeApp(firebaseConfig);
+const fbAuth = firebase.auth();
+const db = firebase.firestore();
+// Domaine factice utilisé pour transformer un "identifiant" (username) en email,
+// requis par Firebase Authentication. Ne correspond à aucune vraie boîte mail.
+const FAKE_EMAIL_DOMAIN = 'pairing40k.local';
+function usernameToEmail(username){
+  return `${String(username).trim().toLowerCase()}@${FAKE_EMAIL_DOMAIN}`;
+}
+</script>
 <script>
 let TEAM_SIZE = 8;
 
@@ -2426,7 +2446,7 @@ function saveStateToStorage(){
         const mm = String(now.getMinutes()).padStart(2,'0');
         ind.textContent = `✓ Sauvegardé automatiquement (${hh}:${mm})`;
       }
-      if(typeof scheduleCloudPush === 'function') scheduleCloudPush();
+      if(typeof scheduleStatePush === 'function') scheduleStatePush();
     }catch(e){
       const ind = document.getElementById('autoSaveIndicator');
       if(ind) ind.textContent = '⚠ Sauvegarde locale indisponible';
@@ -2529,64 +2549,19 @@ loadStateFromStorage();
 renderAll();
 
 /* ================================================================================
-   AUTHENTIFICATION — protection côté navigateur (pas une sécurité serveur)
+   AUTHENTIFICATION — Firebase Authentication + Firestore
    -----------------------------------------------------------------------
-   Les comptes et mots de passe (hashés en SHA-256) sont stockés dans le
-   localStorage du navigateur, sur cet appareil. Cet écran de connexion
-   empêche un usage "occasionnel" par une personne non autorisée, mais
-   n'importe qui ayant accès au fichier HTML ou aux outils de développement
-   du navigateur (F12) peut lire/modifier ce localStorage et contourner
-   l'écran. Ne pas s'en servir pour protéger des données réellement
-   sensibles (ce n'est pas le cas ici : pas de données perso, pas de clé
-   API partagée — chaque appareil doit renseigner la sienne).
+   Les comptes vivent désormais côté serveur (Firebase), plus dans le
+   localStorage du navigateur : ils sont donc valables sur n'importe quel
+   appareil. L'identifiant saisi ("username") est transformé en un email
+   factice (voir usernameToEmail) car Firebase Authentication exige un email.
+   Le rôle (admin / user) est stocké dans le document Firestore users/{uid}.
+   Un compte dont le document users/{uid} a été supprimé par l'admin est
+   automatiquement déconnecté au prochain chargement (accès révoqué), même
+   si le compte Firebase Authentication sous-jacent existe techniquement
+   encore (sa suppression définitive se fait depuis la console Firebase).
 ================================================================================= */
-const AUTH_STORAGE_KEY = 'w40k-pairing-tool-users-v1';
-const SESSION_STORAGE_KEY = 'w40k-pairing-tool-session-v1';
-const ADMIN_DEFAULT_HASH = '871872670134933f1bc52cde8043cb429efcdab63266dda1cc27244ee107a505'; // sha256('totototo')
-
-async function sha256Hex(text){
-  const enc = new TextEncoder().encode(text);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-}
-
-function loadUsers(){
-  try{
-    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
-    if(!raw) throw new Error('none');
-    const users = JSON.parse(raw);
-    if(!Array.isArray(users) || !users.length) throw new Error('empty');
-    if(!users.some(u=>u.username==='admin')){
-      users.unshift({ username:'admin', passHash: ADMIN_DEFAULT_HASH, role:'admin' });
-      saveUsers(users);
-    }
-    return users;
-  }catch(e){
-    const initial = [{ username:'admin', passHash: ADMIN_DEFAULT_HASH, role:'admin' }];
-    saveUsers(initial);
-    return initial;
-  }
-}
-function saveUsers(users){
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(users));
-}
-function getSession(){
-  try{
-    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  }catch(e){ return null; }
-}
-function setSession(username){
-  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({ username }));
-}
-function clearSession(){
-  localStorage.removeItem(SESSION_STORAGE_KEY);
-}
-function currentUserRecord(){
-  const session = getSession();
-  if(!session) return null;
-  return loadUsers().find(u=>u.username===session.username) || null;
-}
+let currentUserDoc = null; // { uid, username, role } une fois connecté
 
 function escapeHtmlAuth(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -2606,21 +2581,13 @@ function showLogin(){
 }
 
 function applyRoleRestrictions(){
-  const user = currentUserRecord();
-  const isAdmin = !!user && user.role === 'admin';
+  const isAdmin = !!currentUserDoc && currentUserDoc.role === 'admin';
 
   const who = document.getElementById('sessionWho');
-  if(who) who.textContent = user ? `Connecté : ${user.username} (${isAdmin ? 'admin' : 'utilisateur'})` : '';
+  if(who) who.textContent = currentUserDoc ? `Connecté : ${currentUserDoc.username} (${isAdmin ? 'admin' : 'utilisateur'})` : '';
 
   const manageBtn = document.getElementById('manageUsersBtn');
   if(manageBtn) manageBtn.style.display = isAdmin ? '' : 'none';
-
-  const cloudSettingsBtn = document.getElementById('toggleCloudSettingsBtn');
-  if(cloudSettingsBtn) cloudSettingsBtn.style.display = isAdmin ? '' : 'none';
-  if(!isAdmin){
-    const cloudPanel = document.getElementById('cloudSettingsPanel');
-    if(cloudPanel) cloudPanel.style.display = 'none';
-  }
 
   // Réservé à l'admin : réglages de la clé API Gemini + rafraîchissement de la méta
   ['toggleGeminiSettingsBtn','toggleGeminiSettingsBtn2'].forEach(id=>{
@@ -2641,43 +2608,62 @@ document.getElementById('loginForm').addEventListener('submit', async (e)=>{
   const uname = document.getElementById('loginUsername').value.trim();
   const pass = document.getElementById('loginPassword').value;
   const errEl = document.getElementById('loginError');
+  const submitBtn = document.querySelector('#loginForm button[type=submit], #loginForm .btn');
   errEl.textContent = '';
-  const users = loadUsers();
-  const hash = await sha256Hex(pass);
-  const found = users.find(u=>u.username===uname && u.passHash===hash);
-  if(!found){
-    errEl.textContent = 'Identifiant ou mot de passe incorrect.';
-    return;
+  if(!uname || !pass){ errEl.textContent = 'Identifiant et mot de passe requis.'; return; }
+  if(submitBtn) submitBtn.disabled = true;
+  try{
+    await fbAuth.signInWithEmailAndPassword(usernameToEmail(uname), pass);
+    // onAuthStateChanged (plus bas) prend le relai : chargement du profil + showApp()
+    document.getElementById('loginUsername').value='';
+    document.getElementById('loginPassword').value='';
+  }catch(err){
+    if(['auth/invalid-credential','auth/user-not-found','auth/wrong-password','auth/invalid-email'].includes(err.code)){
+      errEl.textContent = 'Identifiant ou mot de passe incorrect.';
+    }else if(err.code === 'auth/too-many-requests'){
+      errEl.textContent = 'Trop de tentatives, réessaie dans quelques minutes.';
+    }else{
+      errEl.textContent = 'Connexion impossible (' + err.code + ').';
+    }
+  }finally{
+    if(submitBtn) submitBtn.disabled = false;
   }
-  setSession(uname);
-  document.getElementById('loginUsername').value='';
-  document.getElementById('loginPassword').value='';
-  showApp();
 });
 
 document.getElementById('logoutBtn').addEventListener('click', ()=>{
-  clearSession();
-  showLogin();
+  fbAuth.signOut();
 });
 
 /* ---- Gestion des comptes (admin uniquement) ---- */
-function renderUserAdminList(){
-  const users = loadUsers();
+async function renderUserAdminList(){
   const container = document.getElementById('userAdminList');
-  container.innerHTML = users.map(u=>`
+  container.innerHTML = '<div class="hint" style="margin:0;">Chargement…</div>';
+  let snap;
+  try{
+    snap = await db.collection('users').orderBy('username').get();
+  }catch(e){
+    container.innerHTML = '<div class="err">Impossible de charger la liste des comptes.</div>';
+    return;
+  }
+  const docs = snap.docs.map(d=>({ uid:d.id, ...d.data() }));
+  container.innerHTML = docs.map(u=>`
     <div class="useradmin-row">
       <span class="uname">${escapeHtmlAuth(u.username)}</span>
       <span class="urole">${escapeHtmlAuth(u.role)}</span>
-      ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Supprimer</button>` : ''}
+      ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.uid)}" data-name="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Révoquer l'accès</button>` : ''}
     </div>
   `).join('');
   container.querySelectorAll('[data-del]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const uname = btn.getAttribute('data-del');
-      if(!confirm(`Supprimer le compte "${uname}" ?`)) return;
-      const users = loadUsers().filter(u=>u.username!==uname);
-      saveUsers(users);
-      renderUserAdminList();
+    btn.addEventListener('click', async ()=>{
+      const uid = btn.getAttribute('data-del');
+      const uname = btn.getAttribute('data-name');
+      if(!confirm(`Révoquer l'accès du compte "${uname}" ? Cette personne ne pourra plus se connecter à l'outil. (Le compte technique reste visible dans la console Firebase Authentication ; à supprimer là-bas si besoin.)`)) return;
+      try{
+        await db.collection('users').doc(uid).delete();
+        renderUserAdminList();
+      }catch(e){
+        alert('Erreur lors de la révocation : ' + e.message);
+      }
     });
   });
 }
@@ -2694,73 +2680,87 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const uname = document.getElementById('newUserName').value.trim();
   const pass = document.getElementById('newUserPass').value;
   const errEl = document.getElementById('userAdminError');
+  const addBtn = document.getElementById('addUserBtn');
   errEl.textContent = '';
   if(!uname || !pass){ errEl.textContent = 'Identifiant et mot de passe requis.'; return; }
-  if(pass.length < 4){ errEl.textContent = 'Mot de passe trop court (4 caractères minimum).'; return; }
-  const users = loadUsers();
-  if(users.some(u=>u.username.toLowerCase()===uname.toLowerCase())){
-    errEl.textContent = 'Cet identifiant existe déjà.';
-    return;
+  if(pass.length < 6){ errEl.textContent = 'Mot de passe trop court (6 caractères minimum, requis par Firebase).'; return; }
+  if(!/^[a-zA-Z0-9_.-]+$/.test(uname)){ errEl.textContent = 'Identifiant : lettres, chiffres, "_", "." ou "-" uniquement.'; return; }
+  addBtn.disabled = true;
+  // On crée le nouveau compte via une seconde instance Firebase isolée, pour ne
+  // pas remplacer la session de l'admin actuellement connecté (createUser
+  // connecte automatiquement l'app qui l'appelle avec le nouveau compte).
+  const secondaryApp = firebase.initializeApp(firebaseConfig, 'secondary-' + Date.now());
+  const secondaryAuth = secondaryApp.auth();
+  try{
+    const cred = await secondaryAuth.createUserWithEmailAndPassword(usernameToEmail(uname), pass);
+    await db.collection('users').doc(cred.user.uid).set({
+      username: uname,
+      usernameLower: uname.toLowerCase(),
+      role: 'user',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+      createdBy: currentUserDoc ? currentUserDoc.username : null
+    });
+    document.getElementById('newUserName').value = '';
+    document.getElementById('newUserPass').value = '';
+    renderUserAdminList();
+  }catch(err){
+    if(err.code === 'auth/email-already-in-use'){
+      errEl.textContent = 'Cet identifiant existe déjà.';
+    }else if(err.code === 'auth/weak-password'){
+      errEl.textContent = 'Mot de passe trop faible (6 caractères minimum).';
+    }else{
+      errEl.textContent = 'Erreur : ' + err.message;
+    }
+  }finally{
+    try{ await secondaryAuth.signOut(); }catch(e){}
+    try{ await secondaryApp.delete(); }catch(e){}
+    addBtn.disabled = false;
   }
-  const passHash = await sha256Hex(pass);
-  users.push({ username: uname, passHash, role: 'user' });
-  saveUsers(users);
-  document.getElementById('newUserName').value = '';
-  document.getElementById('newUserPass').value = '';
-  renderUserAdminList();
 });
 
-/* ---- Initialisation de la session au chargement de la page ---- */
-(function initAuth(){
-  loadUsers(); // garantit l'existence du compte admin par défaut
-  const session = getSession();
-  const record = session ? currentUserRecord() : null;
-  if(record){
+/* ---- Suivi de la session Firebase au chargement et à chaque connexion/déconnexion ---- */
+fbAuth.onAuthStateChanged(async (user)=>{
+  if(!user){
+    currentUserDoc = null;
+    stopStateSync();
+    showLogin();
+    return;
+  }
+  try{
+    const doc = await db.collection('users').doc(user.uid).get();
+    if(!doc.exists){
+      // Compte authentifié mais sans profil (révoqué par l'admin, ou jamais provisionné) : accès refusé
+      currentUserDoc = null;
+      await fbAuth.signOut();
+      const errEl = document.getElementById('loginError');
+      if(errEl) errEl.textContent = 'Ce compte n\'a plus accès à l\'outil (contacte l\'admin).';
+      showLogin();
+      return;
+    }
+    currentUserDoc = { uid: user.uid, username: doc.data().username, role: doc.data().role };
     showApp();
-  } else {
-    clearSession();
+    startStateSync();
+  }catch(e){
+    currentUserDoc = null;
     showLogin();
   }
-})();
+});
 
 /* ================================================================================
-   SYNCHRONISATION CLOUD (jsonbin.io) — optionnelle
+   SYNCHRONISATION CLOUD — Firestore, temps réel
    -----------------------------------------------------------------------
-   Permet de centraliser l'état (rosters, matrices, pairing en cours...) dans un
-   bin jsonbin.io partagé, pour éviter de reconfigurer l'outil sur chaque appareil.
-   Limites à connaître :
-   - Ce n'est pas une synchronisation temps réel ni une fusion intelligente :
-     le dernier envoi écrase les données précédentes ("dernier arrivé, dernier
-     servi"). Si deux personnes modifient l'outil en même temps sur deux
-     appareils différents, l'une des deux modifications sera perdue.
-   - Le plan gratuit jsonbin.io limite chaque bin à 100 Ko et à 1 requête/seconde.
-   - La clé API configurée ici part dans les en-têtes HTTP de chaque requête
-     envoyée depuis le navigateur : elle est visible dans l'onglet Réseau des
-     outils de développement par n'importe quel utilisateur connecté, même si
-     elle n'est jamais affichée dans l'interface. Préfère une Access Key limitée
-     à ce seul bin (lecture + écriture) plutôt que la Master Key de ton compte.
+   L'état complet (rosters, matrices, pairing en cours...) est stocké dans un
+   document Firestore unique (state/shared), partagé par tous les comptes.
+   Un onSnapshot() reste à l'écoute en continu : dès qu'un appareil connecté
+   écrit une modification, tous les autres appareils la reçoivent et se
+   mettent à jour automatiquement, sans bouton "charger/envoyer". C'est une
+   fusion "dernier écrit gagne" au niveau du document entier : si deux
+   personnes modifient l'outil au même instant sur deux appareils, l'une des
+   deux écritures peut être écrasée par l'autre (rare en usage normal, où
+   une seule personne pilote le pairing en direct à la fois).
 ================================================================================= */
-const CLOUD_SETTINGS_KEY = 'w40k-pairing-tool-cloud-v1';
-const JSONBIN_ROOT = 'https://api.jsonbin.io/v3';
+const STATE_DOC_REF = () => db.collection('state').doc('shared');
 
-function loadCloudSettings(){
-  try{
-    const raw = localStorage.getItem(CLOUD_SETTINGS_KEY);
-    if(!raw) return { binId:'', apiKey:'' };
-    const parsed = JSON.parse(raw);
-    return { binId: parsed.binId || '', apiKey: parsed.apiKey || '' };
-  }catch(e){
-    return { binId:'', apiKey:'' };
-  }
-}
-function saveCloudSettings(settings){
-  try{
-    localStorage.setItem(CLOUD_SETTINGS_KEY, JSON.stringify(settings));
-    return true;
-  }catch(e){
-    return false;
-  }
-}
 function setCloudIndicator(text, isError){
   const ind = document.getElementById('cloudSyncIndicator');
   if(!ind) return;
@@ -2768,110 +2768,84 @@ function setCloudIndicator(text, isError){
   ind.style.color = isError ? 'var(--red-bright)' : 'var(--bone-dim)';
 }
 
-let cloudApplyingRemote = false;
-let cloudPushTimer = null;
+let applyingRemoteState = false;
+let statePushTimer = null;
+let stateUnsub = null;
 
-async function cloudPull(showBusyMessage){
-  const { binId, apiKey } = loadCloudSettings();
-  if(!binId || !apiKey){
-    if(showBusyMessage) setCloudIndicator('Synchronisation cloud non configurée (demande à l\'admin).', true);
-    return false;
-  }
-  if(showBusyMessage) setCloudIndicator('Chargement depuis le cloud…');
-  try{
-    const resp = await fetch(`${JSONBIN_ROOT}/b/${encodeURIComponent(binId)}/latest`, {
-      method:'GET',
-      headers:{ 'X-Master-Key': apiKey, 'X-Bin-Meta':'false' }
-    });
-    if(!resp.ok){
-      if(resp.status===404) setCloudIndicator('Bin cloud introuvable : vérifie le Bin ID.', true);
-      else if(resp.status===401 || resp.status===403) setCloudIndicator('Clé API cloud refusée par jsonbin.io.', true);
-      else setCloudIndicator(`Erreur cloud (${resp.status}).`, true);
-      return false;
+// Démarre l'écoute temps réel Firestore : appelé juste après une connexion réussie.
+function startStateSync(){
+  if(stateUnsub) return; // déjà en écoute
+  setCloudIndicator('Connexion à Firebase…');
+  stateUnsub = STATE_DOC_REF().onSnapshot(snap=>{
+    if(!snap.exists){
+      setCloudIndicator('☁ En attente de la première sauvegarde.');
+      return;
     }
-    const loaded = await resp.json();
-    if(!loaded || typeof loaded !== 'object') throw new Error('Réponse cloud invalide');
-    cloudApplyingRemote = true;
-    applyLoadedState(loaded);
+    // Ignore l'écho de notre propre écriture (encore "en attente" côté serveur) :
+    // on l'a déjà appliquée localement au moment où on l'a envoyée.
+    if(snap.metadata.hasPendingWrites) return;
+    applyingRemoteState = true;
+    try{
+      applyLoadedState(snap.data());
+      renderAll();
+    }finally{
+      applyingRemoteState = false;
+    }
+    const now = new Date();
+    setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
+  }, err=>{
+    setCloudIndicator('⚠ Connexion à Firebase impossible.', true);
+  });
+}
+// Coupe l'écoute temps réel : appelé à la déconnexion.
+function stopStateSync(){
+  if(stateUnsub){ stateUnsub(); stateUnsub = null; }
+}
+
+// Appelé automatiquement après chaque sauvegarde locale (voir saveStateToStorage),
+// avec un léger débounce pour éviter d'envoyer une écriture Firestore à chaque frappe.
+function scheduleStatePush(){
+  if(applyingRemoteState) return; // on vient de recevoir des données distantes, inutile de les renvoyer aussitôt
+  if(!currentUserDoc) return; // pas connecté : rien à synchroniser
+  clearTimeout(statePushTimer);
+  statePushTimer = setTimeout(()=>{ pushStateToFirestore(); }, 500);
+}
+async function pushStateToFirestore(){
+  if(!currentUserDoc) return;
+  try{
+    // Firestore refuse les valeurs "undefined" (contrairement à JSON.stringify qui les
+    // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
+    // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
+    const sanitized = JSON.parse(JSON.stringify(state));
+    await STATE_DOC_REF().set(sanitized);
+  }catch(e){
+    if(e.code === 'invalid-argument' || /longer than|exceeds the maximum|1048576/.test(String(e.message))){
+      setCloudIndicator('⚠ Données trop volumineuses pour Firestore (limite 1 Mo/document, ex. PDF joint trop lourd).', true);
+    }else{
+      setCloudIndicator('⚠ Échec de l\'envoi vers Firebase.', true);
+    }
+  }
+}
+
+// Bouton de secours pour forcer un rechargement manuel depuis le serveur
+// (utile par exemple juste après une coupure réseau).
+document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
+  setCloudIndicator('Rechargement…');
+  try{
+    const snap = await STATE_DOC_REF().get({ source: 'server' });
+    if(!snap.exists){
+      setCloudIndicator('Aucune donnée sur Firebase pour le moment.');
+      return;
+    }
+    applyingRemoteState = true;
+    applyLoadedState(snap.data());
     renderAll();
-    cloudApplyingRemote = false;
-    const now = new Date();
-    setCloudIndicator(`☁ Chargé depuis le cloud (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-    return true;
+    applyingRemoteState = false;
+    setCloudIndicator('☁ Rechargé depuis Firebase.');
   }catch(e){
-    cloudApplyingRemote = false;
-    setCloudIndicator('⚠ Connexion au cloud impossible.', true);
-    return false;
+    setCloudIndicator('⚠ Connexion à Firebase impossible.', true);
   }
-}
-
-async function cloudPush(showBusyMessage){
-  const { binId, apiKey } = loadCloudSettings();
-  if(!binId || !apiKey){
-    if(showBusyMessage) setCloudIndicator('Synchronisation cloud non configurée (demande à l\'admin).', true);
-    return false;
-  }
-  if(showBusyMessage) setCloudIndicator('Envoi vers le cloud…');
-  try{
-    const resp = await fetch(`${JSONBIN_ROOT}/b/${encodeURIComponent(binId)}`, {
-      method:'PUT',
-      headers:{ 'Content-Type':'application/json', 'X-Master-Key': apiKey, 'X-Bin-Versioning':'false' },
-      body: JSON.stringify(state)
-    });
-    if(!resp.ok){
-      if(resp.status===401 || resp.status===403) setCloudIndicator('Clé API cloud refusée par jsonbin.io.', true);
-      else if(resp.status===404) setCloudIndicator('Bin cloud introuvable : vérifie le Bin ID.', true);
-      else if(resp.status===400) setCloudIndicator('Rejeté par jsonbin.io (config trop volumineuse ?).', true);
-      else setCloudIndicator(`Erreur cloud (${resp.status}).`, true);
-      return false;
-    }
-    const now = new Date();
-    setCloudIndicator(`☁ Envoyé vers le cloud (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-    return true;
-  }catch(e){
-    setCloudIndicator('⚠ Connexion au cloud impossible.', true);
-    return false;
-  }
-}
-
-// Appelé automatiquement après chaque sauvegarde locale, avec un débounce plus
-// large (2s) que la sauvegarde locale, pour respecter la limite de 1 requête/
-// seconde du plan gratuit jsonbin.io et éviter de spammer l'API à chaque frappe.
-function scheduleCloudPush(){
-  if(cloudApplyingRemote) return; // on vient de recevoir des données du cloud, inutile de les renvoyer aussitôt
-  const { binId, apiKey } = loadCloudSettings();
-  if(!binId || !apiKey) return;
-  clearTimeout(cloudPushTimer);
-  cloudPushTimer = setTimeout(()=>{ cloudPush(false); }, 2000);
-}
-
-document.getElementById('cloudPullBtn').addEventListener('click', ()=>{ cloudPull(true); });
-document.getElementById('cloudPushBtn').addEventListener('click', ()=>{ cloudPush(true); });
-
-document.getElementById('toggleCloudSettingsBtn').addEventListener('click', ()=>{
-  const panel = document.getElementById('cloudSettingsPanel');
-  const s = loadCloudSettings();
-  document.getElementById('cloudBinIdInput').value = s.binId;
-  document.getElementById('cloudApiKeyInput').value = s.apiKey;
-  panel.style.display = (panel.style.display==='none') ? 'block' : 'none';
 });
-document.getElementById('saveCloudSettingsBtn').addEventListener('click', ()=>{
-  const binId = document.getElementById('cloudBinIdInput').value.trim();
-  const apiKey = document.getElementById('cloudApiKeyInput').value.trim();
-  const ok = saveCloudSettings({ binId, apiKey });
-  const ind = document.getElementById('cloudSettingsSavedIndicator');
-  if(ind) ind.textContent = ok ? '✓ Enregistré' : '⚠ Échec de l\'enregistrement';
-  setTimeout(()=>{ if(ind) ind.textContent=''; }, 2500);
-});
-
-// Tentative de chargement initial depuis le cloud au démarrage : silencieuse,
-// si rien n'est configuré ou si le réseau échoue, l'outil continue de fonctionner
-// avec les données locales déjà chargées par loadStateFromStorage().
-(function tryInitialCloudSync(){
-  const { binId, apiKey } = loadCloudSettings();
-  if(!binId || !apiKey) return;
-  cloudPull(false);
-})();
 
 </script>
 </body>
