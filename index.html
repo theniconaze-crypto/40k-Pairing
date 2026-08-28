@@ -1046,7 +1046,7 @@ function renderOppTeamPanel(){
   const idx = state.activeOppIdx;
   el.innerHTML = `
     <div class="opp-team-panel-head">
-      <input type="text" id="oppTeamNameInput" value="${ot.name||''}" placeholder="Nom de l'équipe adverse">
+      <input type="text" id="oppTeamNameInput" value="${ot.name||''}" placeholder="Nom de l'équipe adverse" maxlength="60">
       <button class="btn danger" id="oppTeamDeleteBtn" ${state.oppTeams.length<=1?'disabled':''}>Supprimer cette équipe</button>
     </div>
     <div class="roster-grid" id="oppRosterActive"></div>
@@ -1192,7 +1192,7 @@ function renderRoster(containerId, arr){
     const row=document.createElement('div');
     row.className='roster-row';
     row.innerHTML = `<span class="num">${i+1}</span>
-      <input type="text" placeholder="Nom du joueur" value="${entry.name||''}" data-idx="${i}" data-field="name">
+      <input type="text" placeholder="Nom du joueur" value="${entry.name||''}" data-idx="${i}" data-field="name" maxlength="60">
       <select data-idx="${i}" data-field="faction">${factionOptionsHtml(entry.faction)}</select>
       <select data-idx="${i}" data-field="fd">${fdOptionsHtml(entry.fd)}</select>`;
     el.appendChild(row);
@@ -1213,7 +1213,7 @@ function renderTableRoster(){
     const row=document.createElement('div');
     row.className='roster-row';
     row.innerHTML = `<span class="num">${i+1}</span>
-      <input type="text" placeholder="Nom (ex: Table 1)" value="${t.mission||''}" data-idx="${i}" data-field="mission">`;
+      <input type="text" placeholder="Nom (ex: Table 1)" value="${t.mission||''}" data-idx="${i}" data-field="mission" maxlength="60">`;
     el.appendChild(row);
   });
   el.querySelectorAll('input').forEach(inp=>{
@@ -2678,13 +2678,31 @@ function scheduleStatePush(){
   clearTimeout(statePushTimer);
   statePushTimer = setTimeout(()=>{ pushStateToFirestore(); }, 500);
 }
+// Filet de sécurité : si une chaîne de texte a fini anormalement longue dans le state
+// (collage accidentel d'un gros bloc de texte dans un champ censé rester court — nom de
+// joueur, nom d'équipe, nom de table...), on la tronque avant l'envoi plutôt que de laisser
+// Firestore rejeter tout le document. Ne modifie que la copie envoyée au cloud, jamais
+// le state local affiché à l'écran : l'utilisateur ne perd rien de ce qu'il voit.
+const MAX_FIELD_LENGTH = 300;
+function truncateOversizedStrings(value){
+  if(typeof value === 'string'){
+    return value.length > MAX_FIELD_LENGTH ? value.slice(0, MAX_FIELD_LENGTH) : value;
+  }
+  if(Array.isArray(value)) return value.map(truncateOversizedStrings);
+  if(value && typeof value === 'object'){
+    const out = {};
+    for(const k in value) out[k] = truncateOversizedStrings(value[k]);
+    return out;
+  }
+  return value;
+}
 async function pushStateToFirestore(){
   if(!currentUserDoc) return;
   try{
     // Firestore refuse les valeurs "undefined" (contrairement à JSON.stringify qui les
     // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
     // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
-    const sanitized = JSON.parse(JSON.stringify(state));
+    const sanitized = truncateOversizedStrings(JSON.parse(JSON.stringify(state)));
     await STATE_DOC_REF().set(sanitized);
   }catch(e){
     if(e.code === 'invalid-argument' || /longer than|exceeds the maximum|1048576/.test(String(e.message))){
