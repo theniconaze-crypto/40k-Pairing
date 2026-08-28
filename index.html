@@ -2378,6 +2378,11 @@ document.getElementById('importFile').addEventListener('change', e=>{
 // en comblant tout champ manquant/corrompu par une valeur par défaut sûre, pour ne
 // jamais planter l'appli sur un fichier ou un stockage partiel/ancien.
 function applyLoadedState(loaded){
+  // Les PDF attachés aux équipes adverses sont volontairement exclus de la synchro
+  // Firebase (trop volumineux pour la limite de 1 Mo/document Firestore) : ils restent
+  // 100% locaux à chaque appareil. On les préserve donc ici quand l'état reçu (ex. venant
+  // de Firestore) ne les contient pas, pour ne pas les effacer à chaque synchro.
+  const previousOppTeamsForPdf = (typeof state !== 'undefined' && state && Array.isArray(state.oppTeams)) ? state.oppTeams : null;
   state = loaded;
   TEAM_SIZE = (state.myTeam && state.myTeam.length) || 8;
   // Migration depuis l'ancien format (une seule équipe adverse)
@@ -2407,6 +2412,12 @@ function applyLoadedState(loaded){
   // adverse déjà sauvegardée/importée (anciens fichiers ne les ayant jamais connus), à la
   // bonne taille.
   state.oppTeams.forEach((ot,idx)=>{
+    // Restaure le PDF local si l'état reçu ne l'a pas (voir note plus haut) : on suppose
+    // ici que l'équipe adverse à la même position (idx) est la même qu'avant.
+    if(!ot.pdfData && previousOppTeamsForPdf && previousOppTeamsForPdf[idx] && previousOppTeamsForPdf[idx].pdfData){
+      ot.pdfData = previousOppTeamsForPdf[idx].pdfData;
+      ot.pdfName = previousOppTeamsForPdf[idx].pdfName || ot.pdfName;
+    }
     ot.matchupMood = resizeMoodMatrixTo(ot.matchupMood, TEAM_SIZE);
     if(!ot.pairing || !ot.pairing.length) ot.pairing = makePairingArray();
     if(ot.pdfName===undefined) ot.pdfName = null;
@@ -2817,6 +2828,13 @@ async function pushStateToFirestore(){
     // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
     // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
     const sanitized = JSON.parse(JSON.stringify(state));
+    // Les PDF attachés (base64) peuvent facilement dépasser la limite de 1 Mo/document
+    // de Firestore : ils restent donc 100% locaux à chaque appareil (comme prévu à
+    // l'origine, voir le commentaire "pour rester 100% local" plus haut dans ce fichier),
+    // seul le nom du fichier est conservé pour l'affichage.
+    if(Array.isArray(sanitized.oppTeams)){
+      sanitized.oppTeams.forEach(ot=>{ if(ot) ot.pdfData = null; });
+    }
     await STATE_DOC_REF().set(sanitized);
   }catch(e){
     if(e.code === 'invalid-argument' || /longer than|exceeds the maximum|1048576/.test(String(e.message))){
