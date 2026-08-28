@@ -646,6 +646,12 @@ function usernameToEmail(username){
 </script>
 <script>
 let TEAM_SIZE = 8;
+// Déclarée tout en haut du script (et non plus loin, près de la logique de connexion) car
+// des fonctions de rendu appelées dès le chargement de la page (avant toute connexion),
+// comme renderOppTeamTabsInto, la lisent pour adapter l'interface au rôle du compte connecté.
+// La déclarer plus tard provoquait une ReferenceError ("Cannot access before initialization")
+// dès le premier rendu, qui cassait la connexion pour tout le monde.
+let currentUserDoc = null; // { uid, username, role } une fois connecté
 
 const FACTIONS_GROUPED = {
   'Imperium': [
@@ -2440,7 +2446,7 @@ renderAll();
    si le compte Firebase Authentication sous-jacent existe techniquement
    encore (sa suppression définitive se fait depuis la console Firebase).
 ================================================================================= */
-let currentUserDoc = null; // { uid, username, role } une fois connecté
+// (currentUserDoc est déclarée tout en haut du script — voir commentaire là-bas)
 
 function escapeHtmlAuth(s){
   return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
