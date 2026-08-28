@@ -378,6 +378,10 @@
     <div class="useradmin-form">
       <label>Identifiant<input type="text" id="newUserName" autocomplete="off"></label>
       <label>Mot de passe<input type="password" id="newUserPass" autocomplete="new-password"></label>
+      <label>Accès<select id="newUserRole">
+        <option value="user">Complet</option>
+        <option value="matchups">Matchups uniquement</option>
+      </select></label>
       <button class="btn secondary" id="addUserBtn" type="button">Ajouter le compte</button>
     </div>
     <div class="err" id="userAdminError"></div>
@@ -2453,9 +2457,10 @@ function showLogin(){
 
 function applyRoleRestrictions(){
   const isAdmin = !!currentUserDoc && currentUserDoc.role === 'admin';
+  const matchupsOnly = !!currentUserDoc && currentUserDoc.role === 'matchups';
 
   const who = document.getElementById('sessionWho');
-  if(who) who.textContent = currentUserDoc ? `Connecté : ${currentUserDoc.username} (${isAdmin ? 'admin' : 'utilisateur'})` : '';
+  if(who) who.textContent = currentUserDoc ? `Connecté : ${currentUserDoc.username} (${ROLE_LABELS[currentUserDoc.role] || currentUserDoc.role})` : '';
 
   const manageBtn = document.getElementById('manageUsersBtn');
   if(manageBtn) manageBtn.style.display = isAdmin ? '' : 'none';
@@ -2472,6 +2477,33 @@ function applyRoleRestrictions(){
   // Le rafraîchissement de la méta reste accessible à tous les comptes connectés :
   // il utilise la clé API déjà enregistrée sur cet appareil par l'admin, sans jamais
   // l'afficher ni permettre de la modifier depuis un compte non-admin.
+
+  // Comptes "Matchups uniquement" : accès restreint au seul onglet Matchups, et à
+  // l'intérieur de cet onglet, à la seule matrice de matchup par joueur (pas au tableau
+  // faction vs faction ni au rafraîchissement méta, qui restent affaire de configuration
+  // globale). Restriction côté interface : voir la note sur les règles de sécurité
+  // Firestore si une étanchéité plus stricte est nécessaire.
+  document.querySelectorAll('.tab-btn').forEach(btn=>{
+    const allowed = !matchupsOnly || btn.dataset.tab === 'matchups';
+    btn.style.display = allowed ? '' : 'none';
+  });
+  const formatCtrl = document.getElementById('teamSizeSelect');
+  if(formatCtrl && formatCtrl.closest('.header-controls')){
+    formatCtrl.closest('.header-controls').style.display = matchupsOnly ? 'none' : '';
+  }
+  const advancedFactionMeta = document.querySelector('#panel-matchups details.advanced');
+  if(advancedFactionMeta) advancedFactionMeta.style.display = matchupsOnly ? 'none' : '';
+
+  if(matchupsOnly){
+    // Bascule automatiquement sur l'onglet Matchups (les autres étant masqués, on ne
+    // laisse pas l'appli rester bloquée sur un onglet caché après connexion).
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    const matchupsBtn = document.querySelector('.tab-btn[data-tab="matchups"]');
+    const matchupsPanel = document.getElementById('panel-matchups');
+    if(matchupsBtn) matchupsBtn.classList.add('active');
+    if(matchupsPanel) matchupsPanel.classList.add('active');
+  }
 }
 
 document.getElementById('loginForm').addEventListener('submit', async (e)=>{
@@ -2506,6 +2538,7 @@ document.getElementById('logoutBtn').addEventListener('click', ()=>{
 });
 
 /* ---- Gestion des comptes (admin uniquement) ---- */
+const ROLE_LABELS = { admin:'Admin', user:'Complet', matchups:'Matchups uniquement' };
 async function renderUserAdminList(){
   const container = document.getElementById('userAdminList');
   container.innerHTML = '<div class="hint" style="margin:0;">Chargement…</div>';
@@ -2520,10 +2553,26 @@ async function renderUserAdminList(){
   container.innerHTML = docs.map(u=>`
     <div class="useradmin-row">
       <span class="uname">${escapeHtmlAuth(u.username)}</span>
-      <span class="urole">${escapeHtmlAuth(u.role)}</span>
+      ${u.username==='admin'
+        ? `<span class="urole">${escapeHtmlAuth(ROLE_LABELS[u.role]||u.role)}</span>`
+        : `<select class="urole-select" data-uid="${escapeHtmlAuth(u.uid)}" style="background:var(--bg-raised);border:1px solid var(--brass);color:var(--brass-bright);padding:3px 6px;font-family:'IBM Plex Mono',monospace;font-size:11px;">
+             <option value="user" ${u.role==='user'?'selected':''}>Complet</option>
+             <option value="matchups" ${u.role==='matchups'?'selected':''}>Matchups uniquement</option>
+           </select>`}
       ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.uid)}" data-name="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Révoquer l'accès</button>` : ''}
     </div>
   `).join('');
+  container.querySelectorAll('.urole-select').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const uid = sel.getAttribute('data-uid');
+      try{
+        await db.collection('users').doc(uid).update({ role: sel.value });
+      }catch(e){
+        alert('Erreur lors du changement de rôle : ' + e.message);
+        renderUserAdminList();
+      }
+    });
+  });
   container.querySelectorAll('[data-del]').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
       const uid = btn.getAttribute('data-del');
@@ -2564,10 +2613,11 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const secondaryAuth = secondaryApp.auth();
   try{
     const cred = await secondaryAuth.createUserWithEmailAndPassword(usernameToEmail(uname), pass);
+    const role = document.getElementById('newUserRole').value === 'matchups' ? 'matchups' : 'user';
     await db.collection('users').doc(cred.user.uid).set({
       username: uname,
       usernameLower: uname.toLowerCase(),
-      role: 'user',
+      role: role,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: currentUserDoc ? currentUserDoc.username : null
     });
