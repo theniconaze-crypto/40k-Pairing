@@ -593,6 +593,7 @@
 
   <div class="toolbar" style="align-items:center;">
     <button class="btn secondary" id="cloudPullBtn">🔄 Forcer un rechargement depuis Firebase</button>
+    <button class="btn secondary" id="cloudPushBtn">⬆️ Forcer un envoi vers Firebase</button>
     <button class="btn secondary" id="diagSizeBtn">🩺 Diagnostiquer la taille des données</button>
     <span id="cloudSyncIndicator" style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--bone-dim);margin-left:auto;"></span>
   </div>
@@ -2757,6 +2758,10 @@ async function pushStateToFirestore(){
     // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
     const sanitized = encodeMatricesForFirestore(truncateOversizedStrings(JSON.parse(JSON.stringify(state))));
     await STATE_DOC_REF().set(sanitized);
+    // Retour immédiat : ne pas attendre le round-trip d'onSnapshot (qui de toute façon
+    // ignore l'écho de notre propre écriture tant qu'elle est "pending" côté serveur).
+    const now = new Date();
+    setCloudIndicator(`☁ Envoyé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
   }catch(e){
     if(/longer than|exceeds the maximum|1048576/.test(String(e.message))){
       setCloudIndicator('⚠ Données trop volumineuses pour Firestore (limite 1 Mo/document).', true);
@@ -2813,15 +2818,36 @@ document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
       return;
     }
     applyingRemoteState = true;
-    applyLoadedState(decodeMatricesFromFirestore(snap.data()));
-    renderAll();
-    applyingRemoteState = false;
+    try{
+      applyLoadedState(decodeMatricesFromFirestore(snap.data()));
+      renderAll();
+    }finally{
+      // Toujours remis à false, même si applyLoadedState/renderAll plante : sinon ce
+      // drapeau reste bloqué à true et bloque silencieusement TOUTE sauvegarde future
+      // (scheduleStatePush s'arrête immédiatement tant qu'il est à true).
+      applyingRemoteState = false;
+    }
     setCloudIndicator('☁ Rechargé depuis Firebase.');
   }catch(e){
-    setCloudIndicator('⚠ Connexion à Firebase impossible.', true);
+    applyingRemoteState = false;
+    setCloudIndicator('⚠ Connexion à Firebase impossible : ' + (e.message || e.code || 'erreur inconnue') + '.', true);
   }
 });
 
+// Bouton pour forcer un envoi immédiat vers Firebase (sans attendre le débounce de 500ms
+// ni une modification locale) : utile pour vérifier tout de suite que la synchronisation
+// fonctionne, ou pour forcer une sauvegarde avant de fermer l'onglet.
+document.getElementById('cloudPushBtn').addEventListener('click', async ()=>{
+  if(!currentUserDoc){
+    setCloudIndicator('⚠ Non connecté : impossible d\'envoyer vers Firebase.', true);
+    return;
+  }
+  clearTimeout(statePushTimer);
+  setCloudIndicator('Envoi en cours…');
+  await pushStateToFirestore();
+});
+
 </script>
+
 </body>
 </html>
