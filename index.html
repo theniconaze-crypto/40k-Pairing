@@ -2656,7 +2656,7 @@ function startStateSync(){
     if(snap.metadata.hasPendingWrites) return;
     applyingRemoteState = true;
     try{
-      applyLoadedState(snap.data());
+      applyLoadedState(decodeMatricesFromFirestore(snap.data()));
       renderAll();
     }finally{
       applyingRemoteState = false;
@@ -2698,19 +2698,70 @@ function truncateOversizedStrings(value){
   }
   return value;
 }
+
+// Firestore interdit les "tableaux imbriqués" (un tableau contenant directement d'autres
+// tableaux, ex. [[0,1],[2,3]]) : il rejette l'écriture avec le code générique
+// 'invalid-argument', EXACTEMENT le même code que pour un document trop gros — d'où le
+// message trompeur "trop volumineux" qui apparaissait même sur un state minuscule.
+// state.myFit, state.fdMatrix et, pour chaque équipe adverse, matchup/matchupMood/oppFit
+// sont stockés comme tableau de tableaux. On les encode ici en tableau d'OBJETS juste
+// avant l'envoi (chaque ligne devient {"0":v,"1":v,...} au lieu de [v,v,...]), et on fait
+// l'inverse à la réception (voir decodeMatricesFromFirestore) : totalement transparent
+// pour le reste de l'appli, qui continue de manipuler de vrais tableaux 2D partout ailleurs.
+function rowsToMaps(matrix){
+  if(!Array.isArray(matrix)) return matrix;
+  return matrix.map(row => Array.isArray(row) ? Object.assign({}, row) : row);
+}
+function mapsToRows(matrix){
+  if(!Array.isArray(matrix)) return matrix;
+  return matrix.map(row=>{
+    if(Array.isArray(row)) return row; // déjà au format tableau (anciennes données / compat)
+    if(row && typeof row === 'object'){
+      return Object.keys(row).sort((a,b)=>(+a)-(+b)).map(k=>row[k]);
+    }
+    return row;
+  });
+}
+function encodeMatricesForFirestore(obj){
+  obj.myFit = rowsToMaps(obj.myFit);
+  obj.fdMatrix = rowsToMaps(obj.fdMatrix);
+  if(Array.isArray(obj.oppTeams)){
+    obj.oppTeams = obj.oppTeams.map(ot=>Object.assign({}, ot, {
+      matchup: rowsToMaps(ot.matchup),
+      matchupMood: rowsToMaps(ot.matchupMood),
+      oppFit: rowsToMaps(ot.oppFit)
+    }));
+  }
+  return obj;
+}
+function decodeMatricesFromFirestore(data){
+  if(!data) return data;
+  const out = Object.assign({}, data);
+  out.myFit = mapsToRows(out.myFit);
+  out.fdMatrix = mapsToRows(out.fdMatrix);
+  if(Array.isArray(out.oppTeams)){
+    out.oppTeams = out.oppTeams.map(ot=>Object.assign({}, ot, {
+      matchup: mapsToRows(ot.matchup),
+      matchupMood: mapsToRows(ot.matchupMood),
+      oppFit: mapsToRows(ot.oppFit)
+    }));
+  }
+  return out;
+}
+
 async function pushStateToFirestore(){
   if(!currentUserDoc) return;
   try{
     // Firestore refuse les valeurs "undefined" (contrairement à JSON.stringify qui les
     // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
     // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
-    const sanitized = truncateOversizedStrings(JSON.parse(JSON.stringify(state)));
+    const sanitized = encodeMatricesForFirestore(truncateOversizedStrings(JSON.parse(JSON.stringify(state))));
     await STATE_DOC_REF().set(sanitized);
   }catch(e){
-    if(e.code === 'invalid-argument' || /longer than|exceeds the maximum|1048576/.test(String(e.message))){
+    if(/longer than|exceeds the maximum|1048576/.test(String(e.message))){
       setCloudIndicator('⚠ Données trop volumineuses pour Firestore (limite 1 Mo/document).', true);
     }else{
-      setCloudIndicator('⚠ Échec de l\'envoi vers Firebase.', true);
+      setCloudIndicator('⚠ Échec de l\'envoi vers Firebase : ' + (e.message || e.code || 'erreur inconnue') + '.', true);
     }
   }
 }
@@ -2762,7 +2813,7 @@ document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
       return;
     }
     applyingRemoteState = true;
-    applyLoadedState(snap.data());
+    applyLoadedState(decodeMatricesFromFirestore(snap.data()));
     renderAll();
     applyingRemoteState = false;
     setCloudIndicator('☁ Rechargé depuis Firebase.');
