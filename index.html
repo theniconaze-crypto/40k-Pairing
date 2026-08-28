@@ -593,8 +593,10 @@
 
   <div class="toolbar" style="align-items:center;">
     <button class="btn secondary" id="cloudPullBtn">🔄 Forcer un rechargement depuis Firebase</button>
+    <button class="btn secondary" id="diagSizeBtn">🩺 Diagnostiquer la taille des données</button>
     <span id="cloudSyncIndicator" style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--bone-dim);margin-left:auto;"></span>
   </div>
+  <pre id="diagSizeOutput" style="display:none;white-space:pre-wrap;background:var(--bg-raised);border:1px solid var(--line);padding:12px 14px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:var(--bone);margin-top:-4px;"></pre>
   <div class="hint" style="margin-top:-10px;">
     Les données (rosters, matrices, pairing en cours) sont synchronisées automatiquement et en temps réel via Firebase entre tous les appareils connectés avec un compte actif. Le bouton ci-dessus force un rechargement manuel si besoin, mais ce n'est normalement pas nécessaire.
   </div>
@@ -2712,6 +2714,42 @@ async function pushStateToFirestore(){
     }
   }
 }
+
+// Bouton de diagnostic : affiche dans la page (pas besoin de console) la taille du
+// state actuel, le détail par section, et les chaînes de texte anormalement longues,
+// pour comprendre pourquoi Firestore refuse l'écriture ("données trop volumineuses").
+document.getElementById('diagSizeBtn').addEventListener('click', ()=>{
+  const out = document.getElementById('diagSizeOutput');
+  out.style.display = 'block';
+  const lignes = [];
+  lignes.push('TEAM_SIZE : ' + TEAM_SIZE);
+  lignes.push('Nb équipes adverses : ' + state.oppTeams.length + ' (max ' + MAX_OPP_TEAMS + ')');
+  lignes.push('Nb clés factionMeta : ' + Object.keys(state.factionMeta || {}).length);
+  const tailleParSection = {};
+  for(const k in state){
+    tailleParSection[k] = JSON.stringify(state[k]).length;
+  }
+  const totalOctets = JSON.stringify(state).length;
+  lignes.push('');
+  lignes.push('Taille totale : ' + (totalOctets/1024).toFixed(1) + ' Ko (limite Firestore : 1024 Ko)');
+  lignes.push('');
+  lignes.push('Taille par section (Ko), la plus grosse en premier :');
+  Object.entries(tailleParSection)
+    .sort((a,b)=>b[1]-a[1])
+    .forEach(([k,v])=>{ lignes.push('  - ' + k + ' : ' + (v/1024).toFixed(1) + ' Ko'); });
+  const longues = [];
+  (function walk(o, p){
+    if(o && typeof o === 'object'){ for(const k in o) walk(o[k], p+'.'+k); }
+    else if(typeof o === 'string' && o.length > 100){ longues.push([p, o.length]); }
+  })(state, 'state');
+  longues.sort((a,b)=>b[1]-a[1]);
+  if(longues.length){
+    lignes.push('');
+    lignes.push('Champs texte suspects (>100 caractères) :');
+    longues.slice(0,10).forEach(([p,len])=>{ lignes.push('  - ' + p + ' : ' + len + ' caractères'); });
+  }
+  out.textContent = lignes.join('\n');
+});
 
 // Bouton de secours pour forcer un rechargement manuel depuis le serveur
 // (utile par exemple juste après une coupure réseau).
