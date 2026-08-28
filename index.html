@@ -2619,7 +2619,7 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
       usernameLower: uname.toLowerCase(),
       role: role,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      createdBy: currentUserDoc ? currentUserDoc.username : null
+      createdBy: (currentUserDoc && currentUserDoc.username) ? currentUserDoc.username : null
     });
     document.getElementById('newUserName').value = '';
     document.getElementById('newUserPass').value = '';
@@ -2658,7 +2658,17 @@ fbAuth.onAuthStateChanged(async (user)=>{
       showLogin();
       return;
     }
-    currentUserDoc = { uid: user.uid, username: doc.data().username, role: doc.data().role };
+    // Filet de sécurité : si le profil en base n'a pas (ou plus) de champ "username"
+    // ou "role" valide — profil ancien/incomplet — on retombe sur des valeurs sûres
+    // plutôt que de propager `undefined` dans le reste de l'appli (Firestore refuse
+    // toute écriture contenant un `undefined`, ce qui provoquait une erreur bien plus
+    // loin, par exemple à la création d'un autre compte).
+    const fallbackUsername = (user.email || '').split('@')[0] || user.uid;
+    currentUserDoc = {
+      uid: user.uid,
+      username: doc.data().username || fallbackUsername,
+      role: doc.data().role || 'user'
+    };
     showApp();
     startStateSync();
   }catch(e){
