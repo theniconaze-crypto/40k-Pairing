@@ -1029,6 +1029,7 @@ function renderOppTeamTabsInto(containerId){
   const el = document.getElementById(containerId);
   if(!el) return;
   el.innerHTML='';
+  const matchupsOnly = !!currentUserDoc && currentUserDoc.role === 'matchups';
   state.oppTeams.forEach((ot,idx)=>{
     const wrap=document.createElement('span');
     wrap.className='opp-pill-wrap';
@@ -1039,6 +1040,9 @@ function renderOppTeamTabsInto(containerId){
     wrap.appendChild(btn);
     el.appendChild(wrap);
   });
+  // Les comptes "Matchups uniquement" naviguent entre les équipes adverses déjà créées,
+  // mais ne peuvent pas en ajouter de nouvelle (ça reste une action de configuration).
+  if(matchupsOnly) return;
   const addBtn=document.createElement('button');
   addBtn.className='opp-pill add';
   addBtn.textContent='+ Ajouter (max '+MAX_OPP_TEAMS+')';
@@ -2493,6 +2497,16 @@ function applyRoleRestrictions(){
   }
   const advancedFactionMeta = document.querySelector('#panel-matchups details.advanced');
   if(advancedFactionMeta) advancedFactionMeta.style.display = matchupsOnly ? 'none' : '';
+
+  // Boutons de configuration/maintenance (export, import, effacer, diagnostic, forcer
+  // rechargement/envoi) : masqués pour les comptes "Matchups uniquement", qui n'ont
+  // besoin que de la matrice et des onglets d'équipes déjà créées.
+  ['exportBtn','importBtn','clearStorageBtn','cloudPullBtn','cloudPushBtn','diagSizeBtn'].forEach(id=>{
+    const btn = document.getElementById(id);
+    if(btn) btn.style.display = matchupsOnly ? 'none' : '';
+  });
+  const diagOut = document.getElementById('diagSizeOutput');
+  if(diagOut && matchupsOnly) diagOut.style.display = 'none';
 
   if(matchupsOnly){
     // Bascule automatiquement sur l'onglet Matchups (les autres étant masqués, on ne
