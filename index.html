@@ -2809,7 +2809,12 @@ function saveStateToStorage(){
   clearTimeout(saveTimer);
   saveTimer = setTimeout(()=>{
     try{
+      // On ne met à jour l'horodatage que pour une vraie modification locale (pas quand
+      // on vient d'appliquer un état reçu du cloud) : voir la note sur hasLocalBaseline
+      // et la comparaison d'horodatage dans startStateSync ci-dessous.
+      if(!applyingRemoteState) state.updatedAt = Date.now();
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      hasLocalBaseline = true;
       const ind = document.getElementById('autoSaveIndicator');
       if(ind){
         const now = new Date();
@@ -2839,6 +2844,9 @@ document.getElementById('clearStorageBtn').addEventListener('click', ()=>{
   const ok = confirm('Effacer toutes les données sauvegardées sur cet appareil (rosters, matrices, pairing en cours) ? Cette action est irréversible. Pense à exporter une configuration si tu veux la garder.');
   if(!ok) return;
   try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+  // Plus de ligne de base locale : si une synchronisation cloud est active, la
+  // prochaine version reçue du serveur pourra de nouveau s'appliquer normalement.
+  hasLocalBaseline = false;
   state = {
     myTeam: Array.from({length:TEAM_SIZE}, ()=>({name:'', faction:'', fd:''})),
     oppTeams: [ makeOppTeam(1) ],
@@ -2916,7 +2924,11 @@ function renderAll(){
 // Au démarrage : on tente de restaurer la dernière session sauvegardée sur cet appareil
 // avant le tout premier rendu. Si rien n'est trouvé (première utilisation) ou si la
 // sauvegarde est corrompue, on repart simplement sur l'état par défaut déjà initialisé.
-loadStateFromStorage();
+// hasLocalBaseline mémorise si cet appareil avait déjà quelque chose en local : voir la
+// comparaison d'horodatage dans startStateSync plus bas, qui s'en sert pour ne jamais
+// laisser une version cloud plus ancienne écraser silencieusement des données locales
+// plus récentes (listes d'armée qui « disparaissaient » après un rechargement).
+let hasLocalBaseline = loadStateFromStorage();
 renderAll();
 
 /* ================================================================================
@@ -3221,9 +3233,29 @@ function startStateSync(){
     // Ignore l'écho de notre propre écriture (encore "en attente" côté serveur) :
     // on l'a déjà appliquée localement au moment où on l'a envoyée.
     if(snap.metadata.hasPendingWrites) return;
+    const remoteData = decodeMatricesFromFirestore(snap.data());
+    // Filet de sécurité anti-écrasement : ce document est partagé entre tous les
+    // appareils/comptes ("dernier écrit gagne"). Sans garde-fou, une version cloud
+    // en retard (écriture précédente, coupure réseau juste après un import...) reçue
+    // ici remplaçait silencieusement un état local plus complet — ce qui donnait
+    // l'impression que les listes d'armée fraîchement importées/collées disparaissaient
+    // ou n'étaient jamais sauvegardées après un simple rechargement de la page. On
+    // n'applique donc la version distante que si elle est réellement plus récente que
+    // ce que cet appareil a déjà, sauf tout premier chargement (rien en local à
+    // préserver, il faut bien récupérer les données existantes une première fois).
+    if(hasLocalBaseline){
+      const remoteTs = remoteData.updatedAt || 0;
+      const localTs = (state && state.updatedAt) || 0;
+      if(remoteTs <= localTs){
+        const now = new Date();
+        setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
+        return;
+      }
+    }
+    hasLocalBaseline = true;
     applyingRemoteState = true;
     try{
-      applyLoadedState(decodeMatricesFromFirestore(snap.data()));
+      applyLoadedState(remoteData);
       renderAll();
     }finally{
       applyingRemoteState = false;
@@ -3390,6 +3422,10 @@ document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
       setCloudIndicator('Aucune donnée sur Firebase pour le moment.');
       return;
     }
+    // Action explicite et volontaire de l'utilisateur : contrairement à la
+    // synchronisation automatique (startStateSync), on applique ici la version serveur
+    // sans comparaison d'horodatage.
+    hasLocalBaseline = true;
     applyingRemoteState = true;
     try{
       applyLoadedState(decodeMatricesFromFirestore(snap.data()));
