@@ -101,6 +101,13 @@
   .roster-row{flex-wrap:wrap;}
   .roster-row input[type=text]{flex:1.3; min-width:110px;}
   .roster-row select{flex:1; min-width:130px;}
+  .roster-row .list-btn{
+    flex:0 0 auto; width:30px; height:30px; display:flex; align-items:center; justify-content:center;
+    background:var(--bg-raised); border:1px solid var(--line); color:var(--bone-dim);
+    font-size:14px; cursor:pointer; border-radius:3px; line-height:1;
+  }
+  .roster-row .list-btn:hover{border-color:var(--brass-bright); color:var(--brass-bright);}
+  .roster-row .list-btn.has-list{border-color:var(--brass); color:var(--brass-bright); background:rgba(184,147,90,0.12);}
 
   input[type=text], input[type=password]{
     background:var(--bg-raised); border:1px solid var(--line); color:var(--bone);
@@ -153,6 +160,106 @@
     width:13px; height:13px;
   }
   table.matrix .mood-toggle.mood-empty:hover{opacity:0.9; border-color:var(--brass-bright);}
+
+  /* Bouton "voir la liste d'armée" dans les en-têtes de la matrice de matchups */
+  table.matrix th .matrix-head-label{
+    display:flex; align-items:center; justify-content:center; gap:4px; min-width:0;
+  }
+  table.matrix td.rowhead .matrix-head-label{
+    display:flex; align-items:center; gap:6px; min-width:0;
+  }
+  table.matrix .matrix-head-text{
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
+  }
+  table.matrix .matrix-list-btn{
+    flex:0 0 auto; width:17px; height:17px; display:flex; align-items:center; justify-content:center;
+    background:var(--bg-raised); border:1px solid var(--line); color:var(--bone-dim);
+    font-size:10px; cursor:pointer; border-radius:3px; line-height:1; padding:0;
+  }
+  table.matrix .matrix-list-btn:hover{border-color:var(--brass-bright); color:var(--brass-bright);}
+  table.matrix .matrix-list-btn.has-list{border-color:var(--brass); color:var(--brass-bright); background:rgba(184,147,90,0.12);}
+
+  /* Import de roster (fichier HTML d'équipe) + modale liste d'armée */
+  .import-hint{font-size:11.5px; color:var(--bone-dim); font-family:'IBM Plex Mono',monospace; margin-left:2px;}
+  .modal-overlay{
+    position:fixed; inset:0; background:rgba(0,0,0,0.65); z-index:200;
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .modal-overlay.hidden{display:none;}
+  .modal-box{
+    background:var(--bg-panel); border:1px solid var(--line); border-left:4px solid var(--brass);
+    width:100%; max-width:680px; max-height:86vh; display:flex; flex-direction:column;
+  }
+  .modal-head{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 18px; border-bottom:1px solid var(--line);
+  }
+  .modal-head h3{
+    font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:.05em;
+    font-size:14px; color:var(--brass-bright); margin:0; font-weight:600;
+  }
+  .modal-head .sub{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--bone-dim); margin-top:2px;}
+  .modal-close{
+    background:transparent; border:1px solid var(--line); color:var(--bone-dim);
+    width:28px; height:28px; cursor:pointer; font-size:15px; flex:0 0 auto;
+  }
+  .modal-close:hover{border-color:var(--red-bright); color:var(--red-bright);}
+  .modal-body{padding:14px 18px; overflow-y:auto;}
+  .modal-body textarea{
+    width:100%; min-height:340px; resize:vertical; background:var(--bg-raised);
+    border:1px solid var(--line); color:var(--bone); font-family:'IBM Plex Mono',monospace;
+    font-size:12px; line-height:1.5; padding:10px;
+  }
+  .modal-body textarea:focus{outline:1px solid var(--brass-bright);}
+  .modal-foot{display:flex; justify-content:flex-end; gap:10px; padding:12px 18px; border-top:1px solid var(--line);}
+  .modal-box.wide{max-width:820px;}
+  #armyListModalView.hidden, #armyListModalTextarea.hidden{display:none;}
+  .modal-head .modal-head-actions{display:flex; gap:8px; align-items:center;}
+  .army-toggle{
+    background:transparent; border:1px solid var(--line); color:var(--bone-dim);
+    font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase;
+    letter-spacing:.06em; padding:5px 9px; cursor:pointer;
+  }
+  .army-toggle:hover{border-color:var(--brass); color:var(--brass-bright);}
+  .army-toggle.active{border-color:var(--brass); color:var(--brass-bright); background:rgba(184,147,90,0.12);}
+
+  /* Vue mise en forme de la liste d'armee */
+  .army-view{font-family:'IBM Plex Mono',monospace; font-size:12px; line-height:1.45;}
+  .army-view .army-empty{color:var(--bone-dim); font-size:12px; padding:8px 0;}
+  .army-view .army-section{
+    font-family:'Oswald',sans-serif; text-transform:uppercase; letter-spacing:.08em;
+    font-size:11.5px; color:var(--green-bright); font-weight:600;
+    margin:18px 0 8px; padding-bottom:4px; border-bottom:1px solid var(--line);
+  }
+  .army-view .army-section:first-child{margin-top:0;}
+  .army-view .army-unit{
+    margin:0 0 12px; padding:8px 10px 8px 12px;
+    background:var(--bg-raised); border-left:2px solid var(--brass);
+  }
+  .army-view .army-unit-head{
+    display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; margin-bottom:3px;
+  }
+  .army-view .army-unit-name{
+    font-family:'Oswald',sans-serif; font-size:14px; font-weight:600;
+    color:var(--brass-bright); letter-spacing:.02em;
+  }
+  .army-view .army-pts{
+    font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--green-bright);
+    white-space:nowrap;
+  }
+  .army-view .army-meta{
+    font-size:10.5px; color:var(--bone-dim); text-transform:uppercase; letter-spacing:.05em;
+    margin:1px 0 1px 2px;
+  }
+  .army-view .army-meta.is-enh{color:var(--brass-bright);}
+  .army-view .army-model{color:var(--bone); margin:4px 0 0 2px;}
+  .army-view .army-weapon{color:var(--bone-dim); margin:1px 0 0 20px; font-size:11.5px;}
+  .army-view .army-weapon::before{content:'- '; color:var(--line);}
+  .army-view .army-line{color:var(--bone); margin:2px 0;}
+  .army-view .army-note{
+    color:var(--bone-dim); font-size:11.5px; border:1px dashed var(--line);
+    padding:6px 8px; margin-bottom:12px;
+  }
 
   details.advanced{margin-top:18px; border:1px solid var(--line); background:var(--bg-panel);}
   details.advanced summary{
@@ -449,7 +556,9 @@
     <div class="roster-grid" id="myRoster"></div>
     <div class="toolbar">
       <button class="btn secondary" id="randomizeMyTeamBtn">🎲 Générer mon équipe (meilleur roster meta)</button>
+      <button class="btn secondary" id="importMyRosterBtn">📥 Importer mon équipe (fichier HTML)</button>
     </div>
+    <div class="hint">Le bouton d'import lit un fichier HTML de roster (type export AUSPEX/Cogitator envoyé par un joueur ou un capitaine) et remplit automatiquement noms, factions, Force Dispositions, et attache la liste d'armée complète de chaque joueur (visible via l'icône 📄 sur sa ligne).</div>
     <div class="hint">Tire au sort un roster complet en favorisant les factions les mieux classées dans la méta (tableau de puissance ci-dessus, aussi visible sous forme de matchups dans l'onglet Matchups) : plus une faction est forte, plus elle a de chances d'être choisie — sans jamais dupliquer une faction dans l'équipe, comme l'exige le réglement des tournois en équipe (WTC/ETC/FEQ, formats 6 et 8 joueurs) : les chapitres Space Marines (Blood Angels, Dark Angels, Space Wolves, Black Templars, Deathwatch, Space Marines) comptent tous pour une seule et même faction et ne peuvent donc pas cohabiter dans le roster généré. Chaque Force Disposition doit être représentée au moins une fois dans l'équipe et ne peut jamais l'être plus de deux fois : les places disponibles au-delà d'un exemplaire de chacune sont attribuées en priorité aux FD qui ressortent le mieux, en moyenne, dans la grille « Affinité par Force Disposition » ci-dessous.</div>
 
     <h2 class="section-title">Équipes adverses possibles (jusqu'à 5)</h2>
@@ -459,6 +568,7 @@
       <button class="btn secondary" id="randomizeOppTeamBtn">🎲 Générer aléatoirement l'équipe adverse active</button>
       <button class="btn secondary" id="randomizeAllOppTeamsBtn">🎲 Générer aléatoirement toutes les équipes adverses</button>
     </div>
+    <div class="hint">Un bouton « 📥 Importer ce roster (fichier HTML) » est aussi disponible directement dans le panneau de l'équipe adverse active ci-dessous, pour importer le roster envoyé par cette équipe.</div>
     <div class="hint">Utile pour t'entraîner sur l'onglet « Pairing en direct » sans avoir à saisir un vrai roster adverse : noms, factions et Force Dispositions sont tirés au sort (uniformément, sans favoriser la méta), en respectant les mêmes règles que pour ton équipe : pas de doublon de faction (chapitres Space Marines comptés comme une seule faction), et chaque Force Disposition présente au moins une fois sans jamais dépasser deux occurrences — et les matchups sont pré-remplis à partir de la méta (onglet Matchups).</div>
     <div id="oppTeamPanel"></div>
 
@@ -612,6 +722,34 @@
 
 </div>
 
+<!-- Import de roster depuis un fichier HTML (roster envoyé par une équipe) -->
+<input type="file" id="rosterImportInput" accept=".html,.htm,text/html" style="display:none">
+
+<!-- Modale : consultation / édition de la liste d'armée attachée à un joueur -->
+<div class="modal-overlay hidden" id="armyListModalOverlay">
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <div>
+        <h3 id="armyListModalTitle">Liste d'armée</h3>
+        <div class="sub" id="armyListModalSub"></div>
+      </div>
+      <div class="modal-head-actions">
+        <button class="army-toggle active" id="armyListViewBtn" type="button" title="Affichage mis en forme">Vue</button>
+        <button class="army-toggle" id="armyListEditBtn" type="button" title="Éditer le texte brut">Éditer</button>
+        <button class="modal-close" id="armyListModalCloseX" type="button">✕</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div class="army-view" id="armyListModalView"></div>
+      <textarea id="armyListModalTextarea" class="hidden" placeholder="Aucune liste attachée pour ce joueur. Colle ici sa liste d'armée (texte libre), ou importe le roster complet via le bouton d'import HTML."></textarea>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" id="armyListModalClearBtn" type="button">Effacer la liste</button>
+      <button class="btn" id="armyListModalCloseBtn" type="button">Fermer</button>
+    </div>
+  </div>
+</div>
+
 <!-- Firebase (compat build : utilisable directement dans un <script> classique, sans étape de build) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-auth-compat.js"></script>
@@ -684,6 +822,16 @@ const FD_LABELS_FR = {
   'Reconnaissance':'Reconnaissance',
   'Disruption':'Perturbation',
   'Priority Assets':'Points Stratégiques'
+};
+
+// Correspondance entre les classes CSS "fd-xxx" utilisées par les rosters HTML générés
+// par des outils tiers (ex. AUSPEX/Cogitator) et nos noms officiels de Force Disposition.
+const FD_CLASS_MAP = {
+  'fd-hold': 'Take and Hold',
+  'fd-purge': 'Purge the Foe',
+  'fd-recon': 'Reconnaissance',
+  'fd-disrupt': 'Disruption',
+  'fd-assets': 'Priority Assets'
 };
 
 const MAX_OPP_TEAMS = 5;
@@ -1066,6 +1214,9 @@ function renderOppTeamPanel(){
       <input type="text" id="oppTeamNameInput" value="${ot.name||''}" placeholder="Nom de l'équipe adverse" maxlength="60">
       <button class="btn danger" id="oppTeamDeleteBtn" ${state.oppTeams.length<=1?'disabled':''}>Supprimer cette équipe</button>
     </div>
+    <div class="toolbar">
+      <button class="btn secondary" id="importOppRosterBtn">📥 Importer ce roster (fichier HTML)</button>
+    </div>
     <div class="roster-grid" id="oppRosterActive"></div>
   `;
   document.getElementById('oppTeamNameInput').addEventListener('input', e=>{
@@ -1077,6 +1228,7 @@ function renderOppTeamPanel(){
     renderResultsOppSelect();
   });
   document.getElementById('oppTeamDeleteBtn').addEventListener('click', ()=>removeOppTeam(idx));
+  document.getElementById('importOppRosterBtn').addEventListener('click', ()=>triggerRosterImport(ot.roster, ot.name||('Équipe adverse '+(idx+1))));
   renderRoster('oppRosterActive', ot.roster);
 }
 function renderLiveOppSelect(){
@@ -1208,10 +1360,12 @@ function renderRoster(containerId, arr){
   arr.forEach((entry,i)=>{
     const row=document.createElement('div');
     row.className='roster-row';
+    const hasList = !!(entry.armyList && entry.armyList.trim());
     row.innerHTML = `<span class="num">${i+1}</span>
       <input type="text" placeholder="Nom du joueur" value="${entry.name||''}" data-idx="${i}" data-field="name" maxlength="60">
       <select data-idx="${i}" data-field="faction">${factionOptionsHtml(entry.faction)}</select>
-      <select data-idx="${i}" data-field="fd">${fdOptionsHtml(entry.fd)}</select>`;
+      <select data-idx="${i}" data-field="fd">${fdOptionsHtml(entry.fd)}</select>
+      <button type="button" class="list-btn${hasList?' has-list':''}" data-idx="${i}" title="${hasList?'Voir la liste d\'armée attachée':'Aucune liste attachée — cliquer pour en coller une'}">📄</button>`;
     el.appendChild(row);
   });
   el.querySelectorAll('input,select').forEach(inp=>{
@@ -1221,7 +1375,290 @@ function renderRoster(containerId, arr){
       renderAll();
     });
   });
+  el.querySelectorAll('.list-btn').forEach(btn=>{
+    btn.addEventListener('click', e=>{
+      const idx=+e.target.dataset.idx;
+      openArmyListModal(arr, idx);
+    });
+  });
 }
+
+/* ---------- Liste d'armée attachée à un joueur (consultation / édition manuelle) ---------- */
+let armyListModalCtx = null; // { arr, idx }
+
+/* Rendu lisible de la liste d'armée.
+   Format d'entrée (produit par l'import, ou saisi à la main) :
+     == SECTION ==
+     Nom d'unité · 100 pts
+       ATTACHED AS: ...        (2 espaces = méta ou modèle)
+       6x Canoptek Wraith
+         6x Particle caster    (4 espaces = arme / détail)
+   Le texte sans indentation reste lisible : on retombe sur des heuristiques
+   (lignes "3x ..." = modèles, "LABEL: valeur" en majuscules = méta). */
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function armyTitleHtml(text){
+  const m = text.match(/^(.*?)[\s·•\-]+(\[?\d+\s*(?:pts|points|pt)\]?)\s*$/i);
+  if(m && m[1].trim()){
+    return `<span class="army-unit-name">${escapeHtml(m[1].trim())}</span>`
+         + `<span class="army-pts">${escapeHtml(m[2].trim())}</span>`;
+  }
+  return `<span class="army-unit-name">${escapeHtml(text)}</span>`;
+}
+function renderArmyListView(text){
+  const view = document.getElementById('armyListModalView');
+  const raw = (text||'').replace(/\r/g,'');
+  if(!raw.trim()){
+    view.innerHTML = `<div class="army-empty">Aucune liste attachée pour ce joueur. `
+      + `Utilise « Éditer » pour coller une liste, ou importe le roster HTML complet de l'équipe.</div>`;
+    return;
+  }
+  let html = '';
+  let unitOpen = false;
+  const closeUnit = ()=>{ if(unitOpen){ html += '</div>'; unitOpen = false; } };
+
+  raw.split('\n').forEach(line=>{
+    if(!line.trim()) return;
+    const indent = line.match(/^[ \t]*/)[0].replace(/\t/g,'  ').length;
+    const t = line.trim();
+
+    // Bandeau de section
+    const sec = t.match(/^==\s*(.*?)\s*==$/);
+    if(sec){ closeUnit(); html += `<div class="army-section">${escapeHtml(sec[1])}</div>`; return; }
+
+    // Note ajoutée par l'import (faction non reconnue, etc.)
+    if(/^\[.*\]$/.test(t) && indent === 0){
+      closeUnit(); html += `<div class="army-note">${escapeHtml(t)}</div>`; return;
+    }
+
+    // "ATTACHED AS: ...", "ENHANCEMENT: ..." ou un simple libellé en capitales ("WARLORD")
+    const isMeta  = /^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'’ \-]{1,28}:/.test(t)
+               || (/^[^a-zà-ÿ]{3,}$/.test(t) && !/\d+\s*x/i.test(t) && t.length < 40);
+    const isCount = /^\d+\s*x\s+/i.test(t);         // "6x Canoptek Wraith"
+    const looksLikeTitle = /\d+\s*(pts|points|pt)\b/i.test(t) && !isCount;
+
+    let kind;
+    if(indent >= 4) kind = 'weapon';
+    else if(indent >= 2) kind = isMeta ? 'meta' : 'model';
+    else if(looksLikeTitle) kind = 'title';
+    else if(isMeta) kind = 'meta';
+    else if(isCount) kind = 'model';
+    else kind = 'title';
+
+    if(kind === 'title'){
+      closeUnit();
+      html += `<div class="army-unit"><div class="army-unit-head">${armyTitleHtml(t)}</div>`;
+      unitOpen = true;
+      return;
+    }
+    if(!unitOpen){ html += `<div class="army-unit">`; unitOpen = true; }
+    if(kind === 'meta'){
+      const enh = /^(ENHANCEMENT|AMÉLIORATION|AMELIORATION|WARLORD|SEIGNEUR)/i.test(t) ? ' is-enh' : '';
+      html += `<div class="army-meta${enh}">${escapeHtml(t)}</div>`;
+    } else if(kind === 'model'){
+      html += `<div class="army-model">${escapeHtml(t)}</div>`;
+    } else {
+      html += `<div class="army-weapon">${escapeHtml(t)}</div>`;
+    }
+  });
+  closeUnit();
+  view.innerHTML = html;
+}
+function setArmyListMode(mode){ // 'view' | 'edit'
+  const view = document.getElementById('armyListModalView');
+  const ta   = document.getElementById('armyListModalTextarea');
+  const vBtn = document.getElementById('armyListViewBtn');
+  const eBtn = document.getElementById('armyListEditBtn');
+  if(mode === 'edit'){
+    renderArmyListView(ta.value);
+    view.classList.add('hidden'); ta.classList.remove('hidden');
+    eBtn.classList.add('active'); vBtn.classList.remove('active');
+    ta.focus();
+  } else {
+    renderArmyListView(ta.value);
+    ta.classList.add('hidden'); view.classList.remove('hidden');
+    vBtn.classList.add('active'); eBtn.classList.remove('active');
+  }
+}
+function openArmyListModal(arr, idx){
+  const entry = arr[idx];
+  armyListModalCtx = { arr, idx };
+  document.getElementById('armyListModalTitle').textContent =
+    'Liste d\'armée — ' + displayName(entry, 'Joueur '+(idx+1));
+  document.getElementById('armyListModalSub').textContent =
+    entry.faction ? entry.faction + (entry.fd ? ' · ' + entry.fd : '') : '';
+  document.getElementById('armyListModalTextarea').value = entry.armyList || '';
+  setArmyListMode((entry.armyList && entry.armyList.trim()) ? 'view' : 'edit');
+  document.getElementById('armyListModalOverlay').classList.remove('hidden');
+}
+document.getElementById('armyListViewBtn').addEventListener('click', ()=>setArmyListMode('view'));
+document.getElementById('armyListEditBtn').addEventListener('click', ()=>setArmyListMode('edit'));
+function closeArmyListModal(){
+  if(armyListModalCtx){
+    const { arr, idx } = armyListModalCtx;
+    arr[idx].armyList = document.getElementById('armyListModalTextarea').value;
+  }
+  armyListModalCtx = null;
+  document.getElementById('armyListModalOverlay').classList.add('hidden');
+  renderAll();
+}
+document.getElementById('armyListModalCloseBtn').addEventListener('click', closeArmyListModal);
+document.getElementById('armyListModalCloseX').addEventListener('click', closeArmyListModal);
+document.getElementById('armyListModalOverlay').addEventListener('click', e=>{
+  if(e.target.id==='armyListModalOverlay') closeArmyListModal();
+});
+document.getElementById('armyListModalClearBtn').addEventListener('click', ()=>{
+  document.getElementById('armyListModalTextarea').value = '';
+  setArmyListMode('edit');
+});
+
+/* ---------- Import d'un roster depuis un fichier HTML (export tiers type AUSPEX/Cogitator) ---------- */
+// Reconnaît la faction "officielle" (celle de FACTION_ORDER, utilisée par nos menus
+// déroulants et nos règles anti-doublon) à l'intérieur d'un texte de faction plus détaillé
+// tel qu'exporté par des outils tiers (ex. "Imperium - Adeptus Custodes" ou
+// "Chaos - Chaos Knights" ou "Aeldari · Aspect Host"). On teste les noms les plus longs
+// en premier pour éviter qu'un nom générique ne masque un nom plus spécifique.
+function matchKnownFaction(rawText){
+  if(!rawText) return '';
+  const candidates = FACTION_ORDER.slice().sort((a,b)=>b.length-a.length);
+  for(const f of candidates){
+    if(rawText.indexOf(f) !== -1) return f;
+  }
+  return '';
+}
+// Aplati le bloc HTML de liste d'unités (divs imbriqués : section-label, unit-chunk,
+// unit-title, unit-meta, unit-model, unit-weapon...) en texte brut lisible, une ligne par
+// élément terminal, avec un séparateur pour les titres de section. Générique : fonctionne
+// quel que soit le sous-ensemble de classes utilisé par l'export d'origine.
+function extractArmyListText(root){
+  const lines = [];
+  // Classe logique d'un noeud d'apres son attribut class (export AUSPEX/Cogitator).
+  // Retourne null si la classe n'apprend rien : on retombe alors sur la profondeur.
+  function kindOfClass(el){
+    const raw = el.getAttribute ? (el.getAttribute('class')||'') : '';
+    const cls = raw.toLowerCase();
+    if(!cls) return null;
+    if(cls.indexOf('section-label') !== -1 || cls.indexOf('section-title') !== -1) return 'section';
+    if(cls.indexOf('unit-title') !== -1 || cls.indexOf('unit-name') !== -1) return 'title';
+    if(cls.indexOf('weapon') !== -1) return 'weapon';
+    if(cls.indexOf('model') !== -1) return 'model';
+    if(cls.indexOf('enhancement') !== -1 || cls.indexOf('meta') !== -1 || cls.indexOf('warlord') !== -1) return 'meta';
+    return null;
+  }
+  // Un bloc reconnu (titre, modele, arme, meta) est pris tel quel, sans descendre
+  // dans ses sous-elements : cela garde "Nom + points" sur une meme ligne.
+  function normalize(el){
+    let text = (el.textContent||'').replace(/\s+/g,' ').trim();
+    text = text.replace(/([^\s·\-\d])(\d+\s*(?:pts|points|pt)\b)\s*$/i, '$1 · $2');
+    return text;
+  }
+  function pushKind(kind, text){
+    if(!text) return;
+    if(kind === 'section'){ lines.push(''); lines.push('== ' + text + ' =='); return; }
+    if(kind === 'title'){ lines.push(text); return; }
+    if(kind === 'meta' || kind === 'model'){ lines.push('  ' + text); return; }
+    lines.push('    ' + text); // weapon / detail
+  }
+  function walk(el, depth){
+    Array.from(el.children).forEach(child=>{
+      const text = normalize(child);
+      if(!text) return;
+      const kind = kindOfClass(child);
+      if(kind){ pushKind(kind, text); return; }
+      if(child.children.length === 0){
+        // Feuille sans classe exploitable : on se fie a la profondeur relative.
+        pushKind(depth <= 0 ? 'title' : (depth === 1 ? 'model' : 'weapon'), text);
+      } else {
+        // Conteneur neutre (colonne, wrapper de mise en page) : il ne compte pas
+        // comme un niveau de hierarchie s'il n'a pas de classe du tout.
+        const isWrapper = !(child.getAttribute && child.getAttribute('class'));
+        walk(child, isWrapper ? depth : depth + 1);
+      }
+    });
+  }
+  walk(root, 0);
+  return lines.join('\n').replace(/^\n+/, '').replace(/\n{3,}/g,'\n\n').trimEnd();
+}
+// Extrait la liste des joueurs (nom, faction, FD, liste d'armée en texte) d'un fichier
+// HTML de roster reçu d'une autre équipe. Repose sur la structure d'export AUSPEX/Cogitator
+// (une page par joueur : .player-page-header / .player-page-name / .player-page-faction /
+// .unit-list) mais reste tolérant : un champ manquant est simplement laissé vide plutôt que
+// de faire échouer tout l'import.
+function parseRosterImportHtml(htmlText){
+  const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+  const headers = doc.querySelectorAll('.player-page-header');
+  const players = [];
+  headers.forEach(header=>{
+    const nameEl = header.querySelector('.player-page-name');
+    const factionEl = header.querySelector('.player-page-faction');
+    const name = nameEl ? nameEl.textContent.trim() : '';
+    const factionRaw = factionEl ? factionEl.textContent.trim() : '';
+    const fdClass = Array.from(header.classList).find(c=>FD_CLASS_MAP[c]);
+    const fd = fdClass ? FD_CLASS_MAP[fdClass] : '';
+    const faction = matchKnownFaction(factionRaw);
+    const pageInner = header.closest('.page-inner') || header.parentElement;
+    const listEl = pageInner ? pageInner.querySelector('.unit-list') : null;
+    const armyList = listEl ? extractArmyListText(listEl) : '';
+    if(name || factionRaw || armyList) players.push({ name, faction, factionRaw, fd, armyList });
+  });
+  return players;
+}
+let rosterImportTargetArr = null;
+let rosterImportTargetLabel = '';
+function triggerRosterImport(targetArr, label){
+  rosterImportTargetArr = targetArr;
+  rosterImportTargetLabel = label || '';
+  const input = document.getElementById('rosterImportInput');
+  input.value = '';
+  input.click();
+}
+document.getElementById('rosterImportInput').addEventListener('change', e=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = evt=>{
+    let players;
+    try{
+      players = parseRosterImportHtml(String(evt.target.result));
+    }catch(err){
+      alert('Impossible de lire ce fichier HTML : ' + (err.message || err));
+      return;
+    }
+    if(!players.length){
+      alert('Aucun joueur détecté dans ce fichier (structure de roster non reconnue).');
+      return;
+    }
+    const arr = rosterImportTargetArr;
+    if(!arr) return;
+    const n = Math.min(players.length, arr.length);
+    let msg = `Importer ${players.length} joueur(s) depuis ce fichier dans « ${rosterImportTargetLabel} » ?\n\n`
+      + players.slice(0,n).map((p,i)=>`${i+1}. ${p.name||'(sans nom)'} — ${p.faction || p.factionRaw || '(faction non reconnue)'}${p.fd?' — '+p.fd:''}`).join('\n');
+    if(players.length > arr.length){
+      msg += `\n\n⚠ Le fichier contient ${players.length} joueurs, mais cette équipe n'a que ${arr.length} emplacements : seuls les ${arr.length} premiers seront importés.`;
+    }
+    msg += `\n\nCeci remplacera nom, faction, Force Disposition et liste d'armée déjà saisis pour ${n} emplacement(s) de cette équipe.`;
+    const ok = confirm(msg);
+    if(!ok) return;
+    for(let i=0;i<n;i++){
+      const p = players[i];
+      arr[i] = {
+        name: p.name || '',
+        faction: p.faction || arr[i].faction || '',
+        fd: p.fd || arr[i].fd || '',
+        armyList: p.armyList || ''
+      };
+      if(p.factionRaw && !p.faction){
+        // Faction détaillée non reconnue dans notre liste officielle : on la garde
+        // visible dans la liste d'armée plutôt que de la perdre silencieusement.
+        arr[i].armyList = `[Faction déclarée dans le fichier, non reconnue automatiquement : ${p.factionRaw}]\n\n` + arr[i].armyList;
+      }
+    }
+    renderAll();
+    alert(`${n} joueur(s) importé(s) dans « ${rosterImportTargetLabel} ».`);
+  };
+  reader.readAsText(file);
+});
 
 function renderTableRoster(){
   const el = document.getElementById('tableRoster');
@@ -1264,15 +1701,58 @@ function moodBadgeHtml(myIdx, oppIdx){
   const label = m==='happy' ? 'ressenti positif (matrice de matchups)' : 'ressenti négatif (matrice de matchups)';
   return `<span class="mood-badge" title="${label}">${MOOD_ICON[m]}</span>`;
 }
-function renderMatrix(tableId, rowLabels, colLabels, dataArr, min, max, onChange, moodArr, onMoodChange){
+// entry: { arr, idx } — le tableau (state.myTeam ou ot.roster) et l'index du joueur
+// concerné par ce libellé de ligne/colonne. Sert à afficher un bouton 📄 permettant
+// d'ouvrir/éditer directement la liste d'armée de ce joueur depuis la matrice.
+function buildMatrixHeadLabel(label, entry){
+  const wrap = document.createElement('span');
+  wrap.className = 'matrix-head-label';
+  const player = entry.arr[entry.idx];
+  const hasList = !!(player && player.armyList && player.armyList.trim());
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'list-btn matrix-list-btn' + (hasList ? ' has-list' : '');
+  btn.title = hasList ? "Voir la liste d'armée attachée" : "Aucune liste attachée — cliquer pour en coller une";
+  btn.textContent = '📄';
+  btn.addEventListener('click', e=>{
+    e.stopPropagation();
+    openArmyListModal(entry.arr, entry.idx);
+  });
+  const txt = document.createElement('span');
+  txt.className = 'matrix-head-text';
+  txt.textContent = label;
+  wrap.appendChild(btn);
+  wrap.appendChild(txt);
+  return wrap;
+}
+// rowEntries/colEntries (optionnels) : tableaux parallèles à rowLabels/colLabels, de la
+// forme { arr, idx } pour les libellés qui représentent un joueur (sinon null/undefined
+// pour ce libellé) — voir buildMatrixHeadLabel ci-dessus.
+function renderMatrix(tableId, rowLabels, colLabels, dataArr, min, max, onChange, moodArr, onMoodChange, rowEntries, colEntries){
   const table = document.getElementById(tableId);
   table.innerHTML='';
   const thead = document.createElement('tr');
-  thead.innerHTML = '<th class="corner"></th>' + colLabels.map(c=>`<th title="${c}">${c}</th>`).join('');
+  const corner = document.createElement('th');
+  corner.className = 'corner';
+  thead.appendChild(corner);
+  colLabels.forEach((c,ci)=>{
+    const th = document.createElement('th');
+    th.title = c;
+    const entry = colEntries && colEntries[ci];
+    if(entry) th.appendChild(buildMatrixHeadLabel(c, entry));
+    else th.textContent = c;
+    thead.appendChild(th);
+  });
   table.appendChild(thead);
   rowLabels.forEach((rLabel, ri)=>{
     const tr=document.createElement('tr');
-    tr.innerHTML = `<td class="rowhead" title="${rLabel}">${rLabel}</td>`;
+    const tdHead = document.createElement('td');
+    tdHead.className = 'rowhead';
+    tdHead.title = rLabel;
+    const rEntry = rowEntries && rowEntries[ri];
+    if(rEntry) tdHead.appendChild(buildMatrixHeadLabel(rLabel, rEntry));
+    else tdHead.textContent = rLabel;
+    tr.appendChild(tdHead);
     colLabels.forEach((c,ci)=>{
       const td=document.createElement('td');
       const val = dataArr[ri][ci];
@@ -1335,6 +1815,9 @@ function tableLabels(){ return state.tables.map((t,i)=>t.mission && t.mission.tr
 function withFaction(label, faction){ return faction && faction.trim() ? `${label} (${faction})` : label; }
 function myLabelsWithFaction(){ return state.myTeam.map((e,i)=>withFaction(displayName(e,'Joueur '+(i+1)), e.faction)); }
 function oppLabelsWithFaction(roster){ return roster.map((e,i)=>withFaction(displayName(e,'Adv. '+(i+1)), e.faction)); }
+// Pour brancher le bouton 📄 (liste d'armée) sur les en-têtes de la matrice de matchups.
+function myEntries(){ return state.myTeam.map((e,i)=>({arr:state.myTeam, idx:i})); }
+function oppEntries(roster){ return roster.map((e,i)=>({arr:roster, idx:i})); }
 
 /* ---------- Meta faction vs faction (basée sur des résultats de tournoi) ---------- */
 function sortFactionsByGroup(list){
@@ -1741,7 +2224,7 @@ async function refreshFactionPowerViaAI(){
 function renderMatchupMatrix(){
   renderOppTeamTabsInto('oppTeamTabsMatchups');
   const ot = activeOppTeam();
-  renderMatrix('matchupMatrix', myLabelsWithFaction(), oppLabelsWithFaction(ot.roster), ot.matchup, -3, 3, renderLive, ot.matchupMood, renderLive);
+  renderMatrix('matchupMatrix', myLabelsWithFaction(), oppLabelsWithFaction(ot.roster), ot.matchup, -3, 3, renderLive, ot.matchupMood, renderLive, myEntries(), oppEntries(ot.roster));
 }
 function renderMyFitMatrix(){
   renderMatrix('myFitMatrix', myLabels(), tableLabels(), state.myFit, -2, 2, renderLive);
@@ -2197,6 +2680,9 @@ document.getElementById('randomizeAllOppTeamsBtn').addEventListener('click', ()=
 });
 document.getElementById('randomizeTableNamesBtn').addEventListener('click', ()=>{
   randomizeTableNames();
+});
+document.getElementById('importMyRosterBtn').addEventListener('click', ()=>{
+  triggerRosterImport(state.myTeam, 'Mon équipe');
 });
 
 document.getElementById('modeSelect').addEventListener('change', e=>{
