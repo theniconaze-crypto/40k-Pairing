@@ -3253,14 +3253,21 @@ function scheduleStatePush(){
 // Firestore rejeter tout le document. Ne modifie que la copie envoyée au cloud, jamais
 // le state local affiché à l'écran : l'utilisateur ne perd rien de ce qu'il voit.
 const MAX_FIELD_LENGTH = 300;
-function truncateOversizedStrings(value){
+// Champs volumineux par nature : une liste d'armée importée fait facilement plusieurs
+// milliers de caractères. Les tronquer à 300 caractères comme un nom de joueur revenait
+// à perdre la quasi-totalité de la liste au premier rechargement (l'état distant tronqué
+// écrasant l'état local complet). On leur applique donc une limite propre, large mais
+// bornée, très en dessous du plafond d'un document Firestore (1 Mo).
+const LONG_TEXT_FIELDS = { armyList: 60000 };
+function truncateOversizedStrings(value, key){
   if(typeof value === 'string'){
-    return value.length > MAX_FIELD_LENGTH ? value.slice(0, MAX_FIELD_LENGTH) : value;
+    const max = (key && LONG_TEXT_FIELDS[key]) || MAX_FIELD_LENGTH;
+    return value.length > max ? value.slice(0, max) : value;
   }
-  if(Array.isArray(value)) return value.map(truncateOversizedStrings);
+  if(Array.isArray(value)) return value.map(v=>truncateOversizedStrings(v, key));
   if(value && typeof value === 'object'){
     const out = {};
-    for(const k in value) out[k] = truncateOversizedStrings(value[k]);
+    for(const k in value) out[k] = truncateOversizedStrings(value[k], k);
     return out;
   }
   return value;
