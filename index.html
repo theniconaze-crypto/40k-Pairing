@@ -2868,7 +2868,6 @@ document.getElementById('clearStorageBtn').addEventListener('click', ()=>{
   // Plus de ligne de base locale : si une synchronisation cloud est active, la
   // prochaine version reçue du serveur pourra de nouveau s'appliquer normalement.
   hasLocalBaseline = false;
-  lastSyncedSnapshot = null;
   state = {
     myTeam: Array.from({length:TEAM_SIZE}, ()=>({name:'', faction:'', fd:''})),
     oppTeams: [ makeOppTeam(1) ],
@@ -3255,52 +3254,32 @@ function startStateSync(){
     // Ignore l'écho de notre propre écriture (encore "en attente" côté serveur) :
     // on l'a déjà appliquée localement au moment où on l'a envoyée.
     if(snap.metadata.hasPendingWrites) return;
-    const rawRemote = snap.data();
-
-    if(!lastSyncedSnapshot){
-      // Tout premier document reçu dans cette session (pas encore de référence pour
-      // fusionner finement) : on ne peut comparer qu'à l'échelle de l'état entier, avec
-      // le même filet de sécurité anti-écrasement qu'avant — la version distante n'est
-      // adoptée en bloc que si elle est réellement plus récente que ce que cet appareil a
-      // déjà (sinon une sauvegarde cloud en retard écraserait un état local plus complet,
-      // ex. des listes d'armée fraîchement collées jamais encore renvoyées au serveur).
-      const remoteData = decodeMatricesFromFirestore(rawRemote);
-      if(hasLocalBaseline){
-        const remoteTs = remoteData.updatedAt || 0;
-        const localTs = (state && state.updatedAt) || 0;
-        if(remoteTs <= localTs){
-          // On garde notre état local tel quel ; lastSyncedSnapshot reste null, donc le
-          // prochain envoi de ce poste sera un envoi complet qui réimposera notre version
-          // (plus fraîche) sur le document partagé.
-          const now = new Date();
-          setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-          return;
-        }
+    const remoteData = decodeMatricesFromFirestore(snap.data());
+    // Filet de sécurité anti-écrasement : ce document est partagé entre tous les
+    // appareils/comptes ("dernier écrit gagne"). Sans garde-fou, une version cloud
+    // en retard (écriture précédente, coupure réseau juste après un import...) reçue
+    // ici remplaçait silencieusement un état local plus complet — ce qui donnait
+    // l'impression que les listes d'armée fraîchement importées/collées disparaissaient
+    // ou n'étaient jamais sauvegardées après un simple rechargement de la page. On
+    // n'applique donc la version distante que si elle est réellement plus récente que
+    // ce que cet appareil a déjà, sauf tout premier chargement (rien en local à
+    // préserver, il faut bien récupérer les données existantes une première fois).
+    if(hasLocalBaseline){
+      const remoteTs = remoteData.updatedAt || 0;
+      const localTs = (state && state.updatedAt) || 0;
+      if(remoteTs <= localTs){
+        const now = new Date();
+        setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
+        return;
       }
-      hasLocalBaseline = true;
-      applyingRemoteState = true;
-      try{
-        applyLoadedState(remoteData);
-        renderAll();
-      }finally{
-        applyingRemoteState = false;
-      }
-      lastSyncedSnapshot = JSON.parse(JSON.stringify(rawRemote));
-    } else {
-      // Synchronisation en direct (plusieurs personnes connectées en même temps) : on
-      // fusionne — seuls les champs (ou, pour les équipes adverses, les équipes) que le
-      // serveur vient de changer ET que ce poste n'a pas lui-même modifiés entre-temps
-      // sont adoptés. Une modification locale en attente d'envoi n'est donc jamais
-      // écrasée par ce qu'un autre utilisateur a sauvegardé de son côté.
-      applyingRemoteState = true;
-      let changed = false;
-      try{
-        changed = mergeRemoteIntoState(rawRemote);
-        if(changed) renderAll();
-      }finally{
-        applyingRemoteState = false;
-      }
-      lastSyncedSnapshot = JSON.parse(JSON.stringify(rawRemote));
+    }
+    hasLocalBaseline = true;
+    applyingRemoteState = true;
+    try{
+      applyLoadedState(remoteData);
+      renderAll();
+    }finally{
+      applyingRemoteState = false;
     }
     const now = new Date();
     setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
@@ -3370,54 +3349,15 @@ function mapsToRows(matrix){
     return row;
   });
 }
-// decodeOppTeamEntry : décode UNE équipe adverse (matrices map->tableau + petites
-// normalisations de structure, comme le fait applyLoadedState pour toutes les équipes au
-// chargement) — réutilisé à la fois pour le décodage complet d'un document et pour
-// l'adoption fine d'une seule équipe reçue en direct pendant la fusion (voir
-// mergeRemoteIntoState plus bas).
-function decodeOppTeamEntry(ot){
-  if(!ot || typeof ot !== 'object') return ot;
-  const decoded = Object.assign({}, ot, {
-    matchup: mapsToRows(ot.matchup),
-    matchupMood: mapsToRows(ot.matchupMood),
-    oppFit: mapsToRows(ot.oppFit)
-  });
-  decoded.matchupMood = resizeMoodMatrixTo(decoded.matchupMood, TEAM_SIZE);
-  if(!decoded.pairing || !decoded.pairing.length) decoded.pairing = makePairingArray();
-  decoded.pairing.forEach(p=>{
-    if(p.myScore===undefined) p.myScore = null;
-    if(p.oppScore===undefined) p.oppScore = null;
-    if(p.oppCandidates===undefined) p.oppCandidates = [null,null];
-  });
-  return decoded;
-}
-// oppTeams est stocké côté Firestore comme une MAP indexée par position ("0","1",...)
-// plutôt qu'un tableau : un tableau est une valeur JSON atomique pour Firestore (le
-// modifier oblige à renvoyer le tableau ENTIER), alors qu'une map permet d'écrire/fusionner
-// une seule équipe adverse (ex. "oppTeams.2") sans toucher aux autres — indispensable pour
-// que plusieurs personnes puissent configurer des équipes adverses différentes en même
-// temps sans s'écraser mutuellement. On reste compatible avec d'anciens documents où
-// oppTeams était encore un tableau (ancien format).
-function oppTeamsMapToArray(oppTeams){
-  if(Array.isArray(oppTeams)) return oppTeams.map(decodeOppTeamEntry);
-  if(oppTeams && typeof oppTeams === 'object'){
-    return Object.keys(oppTeams).sort((a,b)=>(+a)-(+b)).map(k=>decodeOppTeamEntry(oppTeams[k]));
-  }
-  return [];
-}
 function encodeMatricesForFirestore(obj){
   obj.myFit = rowsToMaps(obj.myFit);
   obj.fdMatrix = rowsToMaps(obj.fdMatrix);
   if(Array.isArray(obj.oppTeams)){
-    const map = {};
-    obj.oppTeams.forEach((ot,idx)=>{
-      map[String(idx)] = Object.assign({}, ot, {
-        matchup: rowsToMaps(ot.matchup),
-        matchupMood: rowsToMaps(ot.matchupMood),
-        oppFit: rowsToMaps(ot.oppFit)
-      });
-    });
-    obj.oppTeams = map;
+    obj.oppTeams = obj.oppTeams.map(ot=>Object.assign({}, ot, {
+      matchup: rowsToMaps(ot.matchup),
+      matchupMood: rowsToMaps(ot.matchupMood),
+      oppFit: rowsToMaps(ot.oppFit)
+    }));
   }
   return obj;
 }
@@ -3426,90 +3366,14 @@ function decodeMatricesFromFirestore(data){
   const out = Object.assign({}, data);
   out.myFit = mapsToRows(out.myFit);
   out.fdMatrix = mapsToRows(out.fdMatrix);
-  out.oppTeams = oppTeamsMapToArray(out.oppTeams);
-  return out;
-}
-
-// decodeTopLevelValue : convertit une valeur brute reçue de Firestore pour la clé de
-// premier niveau `key` vers le format utilisé par `state` (seuls myFit/fdMatrix ont besoin
-// d'un décodage — voir rowsToMaps/mapsToRows ; tout le reste est déjà utilisable tel quel).
-function decodeTopLevelValue(key, value){
-  if(key==='myFit' || key==='fdMatrix') return mapsToRows(value);
-  return value;
-}
-
-// lastSyncedSnapshot : dernier état, au format Firestore (encodé), qu'on sait avoir été
-// écrit avec succès sur le document partagé — sert de référence pour ne pousser QUE ce qui
-// a changé (voir pushStateToFirestore) et pour fusionner intelligemment ce qui arrive des
-// autres appareils sans écraser une modification locale pas encore envoyée (voir
-// mergeRemoteIntoState). null tant qu'aucune synchronisation n'a encore eu lieu dans cette
-// session (voir startStateSync pour le tout premier chargement, géré à part).
-let lastSyncedSnapshot = null;
-
-// Fusionne un document distant (déjà lu depuis Firestore, format brut/encodé) dans le
-// `state` local, en n'adoptant QUE les champs qui ont réellement changé côté serveur
-// depuis lastSyncedSnapshot — et en laissant intacte toute valeur que CE poste a lui-même
-// modifiée localement depuis la même référence (pour ne jamais écraser une saisie en cours
-// pas encore envoyée). oppTeams est traité équipe par équipe (voir plus haut) : deux
-// personnes qui configurent chacune une équipe adverse différente en simultané ne
-// s'écrasent donc plus. En cas de conflit réel (même champ modifié des deux côtés à la
-// fois), on garde la valeur locale : l'envoi de ce poste, juste après, finira par imposer
-// sa version sur le serveur — la seule situation qu'on ne peut pas mieux arbitrer sans
-// fusion caractère par caractère. Retourne true si quelque chose a effectivement changé
-// localement (pour savoir s'il faut redessiner l'écran).
-function mergeRemoteIntoState(rawRemote){
-  const localSanitized = encodeMatricesForFirestore(truncateOversizedStrings(JSON.parse(JSON.stringify(state))));
-  const prev = lastSyncedSnapshot || {};
-  let changed = false;
-
-  // --- oppTeams : équipe par équipe quand les 3 côtés ont le même nombre d'équipes ---
-  const prevTeams = prev.oppTeams || {};
-  const remTeams = rawRemote.oppTeams || {};
-  const locTeams = localSanitized.oppTeams || {};
-  const sameStructure = Object.keys(prevTeams).length===Object.keys(locTeams).length;
-  if(!sameStructure){
-    // Une équipe a été ajoutée/supprimée localement sans avoir encore été envoyée :
-    // on ne touche pas à oppTeams cette fois-ci pour ne pas mélanger deux structures
-    // différentes ; le prochain envoi de ce poste réglera la divergence normalement.
-  } else {
-    const allIdx = new Set([...Object.keys(prevTeams), ...Object.keys(remTeams), ...Object.keys(locTeams)]);
-    let structuralRemoteChange = Object.keys(remTeams).length !== Object.keys(prevTeams).length;
-    if(structuralRemoteChange){
-      // Ajout/suppression d'équipe adverse par un autre poste : rien de local en attente
-      // (sameStructure est vrai ici) → on adopte le tableau entier tel quel, décodé.
-      state.oppTeams = oppTeamsMapToArray(rawRemote.oppTeams);
-      changed = true;
-    } else {
-      allIdx.forEach(idx=>{
-        const before = JSON.stringify(prevTeams[idx]);
-        const after = JSON.stringify(remTeams[idx]);
-        const local = JSON.stringify(locTeams[idx]);
-        if(after===before) return; // rien de nouveau côté serveur pour cette équipe
-        if(local!==before) return; // ce poste a lui-même modifié cette équipe : on garde le local
-        const i = +idx;
-        if(remTeams[idx]===undefined){
-          if(state.oppTeams[i]!==undefined){ state.oppTeams.splice(i,1); changed = true; }
-        } else {
-          state.oppTeams[i] = decodeOppTeamEntry(remTeams[idx]);
-          changed = true;
-        }
-      });
-    }
+  if(Array.isArray(out.oppTeams)){
+    out.oppTeams = out.oppTeams.map(ot=>Object.assign({}, ot, {
+      matchup: mapsToRows(ot.matchup),
+      matchupMood: mapsToRows(ot.matchupMood),
+      oppFit: mapsToRows(ot.oppFit)
+    }));
   }
-
-  // --- tous les autres champs de premier niveau : comparaison directe ---
-  Object.keys(rawRemote).forEach(k=>{
-    if(k==='oppTeams') return;
-    const before = JSON.stringify(prev[k]);
-    const after = JSON.stringify(rawRemote[k]);
-    if(after===before) return; // pas de changement côté serveur pour ce champ
-    const local = JSON.stringify(localSanitized[k]);
-    if(local!==before) return; // modifié localement en attente d'envoi : on garde le local
-    state[k] = decodeTopLevelValue(k, rawRemote[k]);
-    changed = true;
-  });
-
-  return changed;
+  return out;
 }
 
 async function pushStateToFirestore(){
@@ -3519,47 +3383,7 @@ async function pushStateToFirestore(){
     // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
     // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
     const sanitized = encodeMatricesForFirestore(truncateOversizedStrings(JSON.parse(JSON.stringify(state))));
-    if(!lastSyncedSnapshot){
-      // Toute première synchronisation de la session (ou reprise après un rejet distant à
-      // l'ouverture, voir startStateSync) : on écrit tout, il n'y a pas encore de
-      // référence pour calculer un delta.
-      await STATE_DOC_REF().set(sanitized);
-    } else {
-      // Delta : on ne touche qu'aux champs qui ont réellement changé depuis la dernière
-      // synchro connue, avec un chemin dédié par équipe adverse (ex. "oppTeams.2") — les
-      // équipes adverses des autres utilisateurs, actuellement en train d'être modifiées
-      // en parallèle, ne sont jamais réécrites ni écrasées par cet envoi.
-      const diff = {};
-      const prevTeams = lastSyncedSnapshot.oppTeams || {};
-      const nextTeams = sanitized.oppTeams || {};
-      const allIdx = new Set([...Object.keys(prevTeams), ...Object.keys(nextTeams)]);
-      allIdx.forEach(idx=>{
-        if(JSON.stringify(prevTeams[idx]) !== JSON.stringify(nextTeams[idx])){
-          diff['oppTeams.'+idx] = nextTeams[idx]===undefined ? firebase.firestore.FieldValue.delete() : nextTeams[idx];
-        }
-      });
-      Object.keys(sanitized).forEach(k=>{
-        if(k==='oppTeams') return;
-        if(JSON.stringify(sanitized[k]) !== JSON.stringify(lastSyncedSnapshot[k])) diff[k] = sanitized[k];
-      });
-      Object.keys(lastSyncedSnapshot).forEach(k=>{
-        if(k!=='oppTeams' && !(k in sanitized)) diff[k] = firebase.firestore.FieldValue.delete();
-      });
-      if(Object.keys(diff).length===0){
-        lastSyncedSnapshot = sanitized;
-        return; // rien à envoyer
-      }
-      try{
-        await STATE_DOC_REF().update(diff);
-      }catch(e){
-        // Le document n'existe pas encore côté serveur (tout premier envoi jamais fait
-        // pour ce compte, ou document supprimé entre-temps) : update() échoue toujours
-        // dans ce cas, on retombe alors sur un envoi complet.
-        if(e.code==='not-found'){ await STATE_DOC_REF().set(sanitized); }
-        else throw e;
-      }
-    }
-    lastSyncedSnapshot = sanitized;
+    await STATE_DOC_REF().set(sanitized);
     // Retour immédiat : ne pas attendre le round-trip d'onSnapshot (qui de toute façon
     // ignore l'écho de notre propre écriture tant qu'elle est "pending" côté serveur).
     const now = new Date();
@@ -3633,10 +3457,6 @@ document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
       // (scheduleStatePush s'arrête immédiatement tant qu'il est à true).
       applyingRemoteState = false;
     }
-    // Ce poste est désormais aligné sur ce document précis : sert de référence pour les
-    // prochains envois delta / fusions en direct (voir pushStateToFirestore et
-    // mergeRemoteIntoState).
-    lastSyncedSnapshot = JSON.parse(JSON.stringify(snap.data()));
     setCloudIndicator('☁ Rechargé depuis Firebase.');
   }catch(e){
     applyingRemoteState = false;
