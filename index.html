@@ -1687,8 +1687,13 @@ function displayName(entry, fallback){
 // moodArr/onMoodChange sont optionnels : quand fournis, chaque case reçoit en plus un
 // petit smiley cliquable (content/mécontent/aucun) purement visuel — il ne modifie
 // jamais dataArr ni le score calculé, seulement moodArr.
-const MOOD_CYCLE = [null, 'happy', 'sad'];
-const MOOD_ICON = { happy: '🙂', sad: '☹️' };
+const MOOD_CYCLE = [null, 'happy', 'sad', 'evil'];
+const MOOD_ICON = { happy: '🙂', sad: '☹️', evil: '😈' };
+const MOOD_LABEL = {
+  happy: 'ressenti positif (matrice de matchups)',
+  sad: 'ressenti négatif (matrice de matchups)',
+  evil: 'matchup piège / coup fourré (matrice de matchups)'
+};
 // Petit badge smiley (purement visuel) à afficher à côté d'une projection de score dans
 // l'onglet Pairing en direct, repris directement de la matrice de matchups (moi ×
 // adversaire) de l'équipe adverse actuellement en direct. Retourne '' si aucun smiley
@@ -1698,8 +1703,7 @@ function moodBadgeHtml(myIdx, oppIdx){
   const ot = liveOppTeam();
   const m = ot.matchupMood && ot.matchupMood[myIdx] ? ot.matchupMood[myIdx][oppIdx] : null;
   if(!m) return '';
-  const label = m==='happy' ? 'ressenti positif (matrice de matchups)' : 'ressenti négatif (matrice de matchups)';
-  return `<span class="mood-badge" title="${label}">${MOOD_ICON[m]}</span>`;
+  return `<span class="mood-badge" title="${MOOD_LABEL[m]}">${MOOD_ICON[m]}</span>`;
 }
 // entry: { arr, idx } — le tableau (state.myTeam ou ot.roster) et l'index du joueur
 // concerné par ce libellé de ligne/colonne. Sert à afficher un bouton 📄 permettant
@@ -1780,6 +1784,7 @@ function renderMatrix(tableId, rowLabels, colLabels, dataArr, min, max, onChange
           mood.textContent = m ? MOOD_ICON[m] : '';
           mood.title = m==='happy' ? 'Matchup ressenti positivement (clic pour changer)'
             : m==='sad' ? 'Matchup ressenti négativement (clic pour changer)'
+            : m==='evil' ? 'Matchup piège / coup fourré (clic pour changer)'
             : 'Ajouter un smiley (purement visuel, sans effet sur le score)';
         };
         setMoodUi(moodArr[ri][ci]);
