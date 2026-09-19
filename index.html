@@ -1689,6 +1689,14 @@ function optionLabel(entry, fallback){
   const name = displayName(entry, fallback);
   return entry.faction && entry.faction.trim() ? `${name} (${entry.faction})` : name;
 }
+// Comme optionLabel, avec en plus la Force Disposition ajoutée — utilisé uniquement pour
+// les joueurs adverses dans les menus déroulants du pairing en direct, la FD adverse
+// étant une info stratégique clé au moment de choisir/révéler un attaquant.
+function oppOptionLabel(entry, fallback){
+  const base = optionLabel(entry, fallback);
+  const fdLabel = entry.fd ? FD_LABELS_FR[entry.fd] : '';
+  return fdLabel ? `${base} — ${fdLabel}` : base;
+}
 
 /* ---------- Rendering: Matchup matrix ---------- */
 // moodArr/onMoodChange sont optionnels : quand fournis, chaque case reçoit en plus un
@@ -2429,11 +2437,11 @@ function renderLive(){
         <div class="opp-cand-row">
           <select data-t="${tIdx}" data-slot="0" class="oppCandSelect">
             <option value="">— attaquant 1 —</option>
-            ${optionsO.filter(j=>j!==c1).map(j=>`<option value="${j}" ${j===c0?'selected':''}>${optionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
+            ${optionsO.filter(j=>j!==c1).map(j=>`<option value="${j}" ${j===c0?'selected':''}>${oppOptionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
           </select>
           <select data-t="${tIdx}" data-slot="1" class="oppCandSelect">
             <option value="">— attaquant 2 —</option>
-            ${optionsO.filter(j=>j!==c0).map(j=>`<option value="${j}" ${j===c1?'selected':''}>${optionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
+            ${optionsO.filter(j=>j!==c0).map(j=>`<option value="${j}" ${j===c1?'selected':''}>${oppOptionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
           </select>
         </div>
       </div>`;
@@ -2468,7 +2476,7 @@ function renderLive(){
 
       html += `<details class="rec-more"><summary>Révélation directe / défenseur adverse (sans les 2 propositions)</summary>
         <select data-t="${tIdx}" class="oppSelect">
-          ${optionsO.map(j=>`<option value="${j}">${optionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
+          ${optionsO.map(j=>`<option value="${j}">${oppOptionLabel(liveOppTeam().roster[j],'Adv. '+(j+1))}</option>`).join('')}
         </select>
         <button class="btn secondary" data-action="setOpp" data-t="${tIdx}">Confirmer l'adversaire</button>
       </details>`;
