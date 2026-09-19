@@ -622,6 +622,7 @@
 
     <h2 class="section-title">Matrice des matchups (moi × adversaire)</h2>
     <div class="hint">Note chaque confrontation de -3 (très mauvais matchup pour ta liste) à +3 (très favorable). 0 = équilibré. Cette note doit refléter la moyenne toutes missions confondues. Choisis ci-dessous quelle équipe adverse tu configures.</div>
+    <div class="hint">Le petit smiley dans chaque case (clic pour changer) est purement visuel, sans effet sur le score : 🙂 = je connais ce matchup, ☹️ = je ne connais pas ce matchup, 😈 = matchup gamble (pari, résultat incertain).</div>
     <div class="opp-team-bar" id="oppTeamTabsMatchups"></div>
     <div class="matrix-wrap"><table class="matrix" id="matchupMatrix"></table></div>
   </div>
@@ -1705,9 +1706,9 @@ function oppOptionLabel(entry, fallback){
 const MOOD_CYCLE = [null, 'happy', 'sad', 'evil'];
 const MOOD_ICON = { happy: '🙂', sad: '☹️', evil: '😈' };
 const MOOD_LABEL = {
-  happy: 'ressenti positif (matrice de matchups)',
-  sad: 'ressenti négatif (matrice de matchups)',
-  evil: 'matchup piège / coup fourré (matrice de matchups)'
+  happy: 'je connais ce matchup',
+  sad: 'je ne connais pas ce matchup',
+  evil: 'matchup gamble (pari, résultat incertain)'
 };
 // Petit badge smiley (purement visuel) à afficher à côté d'une projection de score dans
 // l'onglet Pairing en direct, repris directement de la matrice de matchups (moi ×
@@ -1797,9 +1798,9 @@ function renderMatrix(tableId, rowLabels, colLabels, dataArr, min, max, onChange
         const setMoodUi = (m)=>{
           mood.className = 'mood-toggle' + (m ? '' : ' mood-empty');
           mood.textContent = m ? MOOD_ICON[m] : '';
-          mood.title = m==='happy' ? 'Matchup ressenti positivement (clic pour changer)'
-            : m==='sad' ? 'Matchup ressenti négativement (clic pour changer)'
-            : m==='evil' ? 'Matchup piège / coup fourré (clic pour changer)'
+          mood.title = m==='happy' ? 'Je connais ce matchup (clic pour changer)'
+            : m==='sad' ? 'Je ne connais pas ce matchup (clic pour changer)'
+            : m==='evil' ? 'Matchup gamble : pari, résultat incertain (clic pour changer)'
             : 'Ajouter un smiley (purement visuel, sans effet sur le score)';
         };
         setMoodUi(moodArr[ri][ci]);
