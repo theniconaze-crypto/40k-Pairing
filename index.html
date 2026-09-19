@@ -2864,15 +2864,18 @@ function loadStateFromStorage(){
 document.getElementById('clearStorageBtn').addEventListener('click', ()=>{
   const ok = confirm('Effacer toutes les données sauvegardées sur cet appareil (rosters, matrices, pairing en cours) ? Cette action est irréversible. Pense à exporter une configuration si tu veux la garder.');
   if(!ok) return;
-  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+  try{ localStorage.removeItem(STORAGE_KEY); localStorage.removeItem('w40k-sync-base-v2'); }catch(e){}
   // Plus de ligne de base locale : si une synchronisation cloud est active, la
   // prochaine version reçue du serveur pourra de nouveau s'appliquer normalement.
   hasLocalBaseline = false;
+  lastSyncedSnapshot = null;
+  lastSyncedFlat = null;
   state = {
     myTeam: Array.from({length:TEAM_SIZE}, ()=>({name:'', faction:'', fd:''})),
     oppTeams: [ makeOppTeam(1) ],
     activeOppIdx: 0,
     liveOppIdx: 0,
+    resultsOppIdx: 0,
     tables: Array.from({length:TEAM_SIZE}, ()=>({mission:'', notes:''})),
     myFit: Array.from({length:TEAM_SIZE}, ()=>Array(TEAM_SIZE).fill(0)),
     fdMatrix: Array.from({length:5}, ()=>Array(5).fill(0)),
@@ -2885,6 +2888,9 @@ document.getElementById('clearStorageBtn').addEventListener('click', ()=>{
   };
   document.getElementById('autoSaveIndicator').textContent = '';
   renderAll();
+  // Si on est connecté, on repart de la version du serveur (ce bouton ne vide que cet
+  // appareil, il ne doit surtout pas vider les données partagées).
+  if(currentUserDoc) forceReloadFromServer();
 });
 
 /* ---------- Full render ---------- */
@@ -2923,7 +2929,26 @@ function renderAll(){
     };
   }
 
+  let idInfo = null;
+  if(!info && active && active.id && (active.tagName==='INPUT' || active.tagName==='TEXTAREA' || active.tagName==='SELECT')){
+    idInfo = {
+      id: active.id,
+      start: (typeof active.selectionStart==='number') ? active.selectionStart : null,
+      end: (typeof active.selectionEnd==='number') ? active.selectionEnd : null
+    };
+  }
+
   renderAllInner();
+
+  if(idInfo){
+    const restoredById = document.getElementById(idInfo.id);
+    if(restoredById){
+      restoredById.focus();
+      if(idInfo.start!==null && restoredById.setSelectionRange){
+        try{ restoredById.setSelectionRange(idInfo.start, idInfo.end); }catch(e){}
+      }
+    }
+  }
 
   if(info && info.containerId){
     const container = document.getElementById(info.containerId);
@@ -3217,19 +3242,40 @@ fbAuth.onAuthStateChanged(async (user)=>{
 });
 
 /* ================================================================================
-   SYNCHRONISATION CLOUD — Firestore, temps réel
+   SYNCHRONISATION CLOUD — Firestore, temps réel, fusion champ par champ (v2)
    -----------------------------------------------------------------------
-   L'état complet (rosters, matrices, pairing en cours...) est stocké dans un
-   document Firestore unique (state/shared), partagé par tous les comptes.
-   Un onSnapshot() reste à l'écoute en continu : dès qu'un appareil connecté
-   écrit une modification, tous les autres appareils la reçoivent et se
-   mettent à jour automatiquement, sans bouton "charger/envoyer". C'est une
-   fusion "dernier écrit gagne" au niveau du document entier : si deux
-   personnes modifient l'outil au même instant sur deux appareils, l'une des
-   deux écritures peut être écrasée par l'autre (rare en usage normal, où
-   une seule personne pilote le pairing en direct à la fois).
+   Principe : l'état partagé vit dans un document Firestore unique (state/shared),
+   mais chaque « feuille » de l'état (une case de matrice, un nom de joueur, un
+   score, une case du pairing...) est un champ Firestore à part entière.
+
+   • ENVOI : on ne renvoie que les champs modifiés localement depuis la dernière
+     version serveur connue, via update() avec un chemin par champ. Deux personnes
+     qui modifient des champs différents (même dans la même équipe ou la même
+     matrice) ne s'écrasent donc jamais : Firestore applique les deux.
+   • RÉCEPTION : à chaque changement reçu du serveur, fusion à 3 voies
+     (dernière version serveur connue / état local / nouvelle version serveur) :
+     on adopte ce que les autres ont changé, et on garde ce que ce poste a modifié
+     lui-même mais pas encore envoyé. Seul cas « dernier qui écrit gagne » : deux
+     personnes qui modifient EXACTEMENT le même champ au même moment.
+   • DÉMARRAGE : une fenêtre fraîchement ouverte n'écrase JAMAIS le serveur avec sa
+     copie locale (cause de l'ancien bug « mes modifs sont écrasées »). Le serveur
+     est la référence ; seules les modifs locales réellement faites depuis la
+     dernière synchro sont renvoyées.
+   • DÉTECTION : un contrôle automatique repère toute modification de l'état, même
+     quand le code qui l'a faite n'appelle pas renderAll() (pairing en direct,
+     scores, cases de matrices, nom d'équipe...), pour qu'aucune saisie ne reste
+     uniquement en local.
+   • Les champs « de vue » (équipe adverse affichée, onglet live/résultats, mode de
+     calcul) restent propres à chaque utilisateur : voir LOCAL_ONLY_KEYS.
 ================================================================================= */
 const STATE_DOC_REF = () => db.collection('state').doc('shared');
+const SYNC_VERSION = 2;                      // format du document partagé (champ _v)
+const SYNC_BASE_KEY = 'w40k-sync-base-v2';   // dernière version serveur connue (localStorage)
+// Champs propres à chaque utilisateur (navigation / préférences d'affichage) : jamais
+// envoyés au cloud, jamais écrasés par ce que font les autres. Sans ça, quand une
+// personne change d'équipe adverse affichée, l'écran des autres basculait aussi, et
+// leurs saisies partaient dans la mauvaise équipe.
+const LOCAL_ONLY_KEYS = ['activeOppIdx', 'liveOppIdx', 'resultsOppIdx', 'mode', 'updatedAt'];
 
 function setCloudIndicator(text, isError){
   const ind = document.getElementById('cloudSyncIndicator');
@@ -3237,69 +3283,21 @@ function setCloudIndicator(text, isError){
   ind.textContent = text;
   ind.style.color = isError ? 'var(--red-bright)' : 'var(--bone-dim)';
 }
+function clockLabel(){
+  const d = new Date();
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+}
 
 let applyingRemoteState = false;
 let statePushTimer = null;
 let stateUnsub = null;
+let stateRetryTimer = null;
+// Dernière version serveur connue (arbre brut Firestore) + sa version « à plat »
+// (chemin -> valeur), qui sert de point de référence pour l'envoi et la fusion.
+let lastSyncedSnapshot = null;
+let lastSyncedFlat = null;
 
-// Démarre l'écoute temps réel Firestore : appelé juste après une connexion réussie.
-function startStateSync(){
-  if(stateUnsub) return; // déjà en écoute
-  setCloudIndicator('Connexion à Firebase…');
-  stateUnsub = STATE_DOC_REF().onSnapshot(snap=>{
-    if(!snap.exists){
-      setCloudIndicator('☁ En attente de la première sauvegarde.');
-      return;
-    }
-    // Ignore l'écho de notre propre écriture (encore "en attente" côté serveur) :
-    // on l'a déjà appliquée localement au moment où on l'a envoyée.
-    if(snap.metadata.hasPendingWrites) return;
-    const remoteData = decodeMatricesFromFirestore(snap.data());
-    // Filet de sécurité anti-écrasement : ce document est partagé entre tous les
-    // appareils/comptes ("dernier écrit gagne"). Sans garde-fou, une version cloud
-    // en retard (écriture précédente, coupure réseau juste après un import...) reçue
-    // ici remplaçait silencieusement un état local plus complet — ce qui donnait
-    // l'impression que les listes d'armée fraîchement importées/collées disparaissaient
-    // ou n'étaient jamais sauvegardées après un simple rechargement de la page. On
-    // n'applique donc la version distante que si elle est réellement plus récente que
-    // ce que cet appareil a déjà, sauf tout premier chargement (rien en local à
-    // préserver, il faut bien récupérer les données existantes une première fois).
-    if(hasLocalBaseline){
-      const remoteTs = remoteData.updatedAt || 0;
-      const localTs = (state && state.updatedAt) || 0;
-      if(remoteTs <= localTs){
-        const now = new Date();
-        setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-        return;
-      }
-    }
-    hasLocalBaseline = true;
-    applyingRemoteState = true;
-    try{
-      applyLoadedState(remoteData);
-      renderAll();
-    }finally{
-      applyingRemoteState = false;
-    }
-    const now = new Date();
-    setCloudIndicator(`☁ Synchronisé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-  }, err=>{
-    setCloudIndicator('⚠ Connexion à Firebase impossible.', true);
-  });
-}
-// Coupe l'écoute temps réel : appelé à la déconnexion.
-function stopStateSync(){
-  if(stateUnsub){ stateUnsub(); stateUnsub = null; }
-}
-
-// Appelé automatiquement après chaque sauvegarde locale (voir saveStateToStorage),
-// avec un léger débounce pour éviter d'envoyer une écriture Firestore à chaque frappe.
-function scheduleStatePush(){
-  if(applyingRemoteState) return; // on vient de recevoir des données distantes, inutile de les renvoyer aussitôt
-  if(!currentUserDoc) return; // pas connecté : rien à synchroniser
-  clearTimeout(statePushTimer);
-  statePushTimer = setTimeout(()=>{ pushStateToFirestore(); }, 500);
-}
+/* ---------- Filet de sécurité : chaînes trop longues ---------- */
 // Filet de sécurité : si une chaîne de texte a fini anormalement longue dans le state
 // (collage accidentel d'un gros bloc de texte dans un champ censé rester court — nom de
 // joueur, nom d'équipe, nom de table...), on la tronque avant l'envoi plutôt que de laisser
@@ -3326,6 +3324,8 @@ function truncateOversizedStrings(value, key){
   return value;
 }
 
+
+/* ---------- Ancien format v1 (lecture seule, uniquement pour la migration) ---------- */
 // Firestore interdit les "tableaux imbriqués" (un tableau contenant directement d'autres
 // tableaux, ex. [[0,1],[2,3]]) : il rejette l'écriture avec le code générique
 // 'invalid-argument', EXACTEMENT le même code que pour un document trop gros — d'où le
@@ -3349,15 +3349,54 @@ function mapsToRows(matrix){
     return row;
   });
 }
+// decodeOppTeamEntry : décode UNE équipe adverse (matrices map->tableau + petites
+// normalisations de structure, comme le fait applyLoadedState pour toutes les équipes au
+// chargement) — réutilisé à la fois pour le décodage complet d'un document et pour
+// l'adoption fine d'une seule équipe reçue en direct pendant la fusion (voir
+// mergeRemoteIntoState plus bas).
+function decodeOppTeamEntry(ot){
+  if(!ot || typeof ot !== 'object') return ot;
+  const decoded = Object.assign({}, ot, {
+    matchup: mapsToRows(ot.matchup),
+    matchupMood: mapsToRows(ot.matchupMood),
+    oppFit: mapsToRows(ot.oppFit)
+  });
+  decoded.matchupMood = resizeMoodMatrixTo(decoded.matchupMood, TEAM_SIZE);
+  if(!decoded.pairing || !decoded.pairing.length) decoded.pairing = makePairingArray();
+  decoded.pairing.forEach(p=>{
+    if(p.myScore===undefined) p.myScore = null;
+    if(p.oppScore===undefined) p.oppScore = null;
+    if(p.oppCandidates===undefined) p.oppCandidates = [null,null];
+  });
+  return decoded;
+}
+// oppTeams est stocké côté Firestore comme une MAP indexée par position ("0","1",...)
+// plutôt qu'un tableau : un tableau est une valeur JSON atomique pour Firestore (le
+// modifier oblige à renvoyer le tableau ENTIER), alors qu'une map permet d'écrire/fusionner
+// une seule équipe adverse (ex. "oppTeams.2") sans toucher aux autres — indispensable pour
+// que plusieurs personnes puissent configurer des équipes adverses différentes en même
+// temps sans s'écraser mutuellement. On reste compatible avec d'anciens documents où
+// oppTeams était encore un tableau (ancien format).
+function oppTeamsMapToArray(oppTeams){
+  if(Array.isArray(oppTeams)) return oppTeams.map(decodeOppTeamEntry);
+  if(oppTeams && typeof oppTeams === 'object'){
+    return Object.keys(oppTeams).sort((a,b)=>(+a)-(+b)).map(k=>decodeOppTeamEntry(oppTeams[k]));
+  }
+  return [];
+}
 function encodeMatricesForFirestore(obj){
   obj.myFit = rowsToMaps(obj.myFit);
   obj.fdMatrix = rowsToMaps(obj.fdMatrix);
   if(Array.isArray(obj.oppTeams)){
-    obj.oppTeams = obj.oppTeams.map(ot=>Object.assign({}, ot, {
-      matchup: rowsToMaps(ot.matchup),
-      matchupMood: rowsToMaps(ot.matchupMood),
-      oppFit: rowsToMaps(ot.oppFit)
-    }));
+    const map = {};
+    obj.oppTeams.forEach((ot,idx)=>{
+      map[String(idx)] = Object.assign({}, ot, {
+        matchup: rowsToMaps(ot.matchup),
+        matchupMood: rowsToMaps(ot.matchupMood),
+        oppFit: rowsToMaps(ot.oppFit)
+      });
+    });
+    obj.oppTeams = map;
   }
   return obj;
 }
@@ -3366,37 +3405,388 @@ function decodeMatricesFromFirestore(data){
   const out = Object.assign({}, data);
   out.myFit = mapsToRows(out.myFit);
   out.fdMatrix = mapsToRows(out.fdMatrix);
-  if(Array.isArray(out.oppTeams)){
-    out.oppTeams = out.oppTeams.map(ot=>Object.assign({}, ot, {
-      matchup: mapsToRows(ot.matchup),
-      matchupMood: mapsToRows(ot.matchupMood),
-      oppFit: mapsToRows(ot.oppFit)
-    }));
-  }
+  out.oppTeams = oppTeamsMapToArray(out.oppTeams);
   return out;
 }
 
-async function pushStateToFirestore(){
-  if(!currentUserDoc) return;
-  try{
-    // Firestore refuse les valeurs "undefined" (contrairement à JSON.stringify qui les
-    // ignore silencieusement) : ce aller-retour JSON reproduit le même comportement
-    // qu'avant (localStorage / jsonbin) et évite une écriture qui échouerait sinon.
-    const sanitized = encodeMatricesForFirestore(truncateOversizedStrings(JSON.parse(JSON.stringify(state))));
-    await STATE_DOC_REF().set(sanitized);
-    // Retour immédiat : ne pas attendre le round-trip d'onSnapshot (qui de toute façon
-    // ignore l'écho de notre propre écriture tant qu'elle est "pending" côté serveur).
-    const now = new Date();
-    setCloudIndicator(`☁ Envoyé (${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')})`);
-  }catch(e){
-    if(/longer than|exceeds the maximum|1048576/.test(String(e.message))){
-      setCloudIndicator('⚠ Données trop volumineuses pour Firestore (limite 1 Mo/document).', true);
-    }else{
-      setCloudIndicator('⚠ Échec de l\'envoi vers Firebase : ' + (e.message || e.code || 'erreur inconnue') + '.', true);
+
+/* ---------- Format v2 : état <-> arbre Firestore <-> feuilles ---------- */
+// Un tableau [a,b,c] est stocké comme une map {_n:3, "0":a, "1":b, "2":c} : Firestore
+// traite un tableau comme une valeur indivisible (impossible d'en modifier un seul
+// élément sans réécrire tout le tableau, et interdit les tableaux imbriqués), alors
+// qu'une map se modifie champ par champ.
+function encodeNode(v){
+  if(Array.isArray(v)){
+    const o = { _n: v.length };
+    v.forEach((x,i)=>{ o[String(i)] = encodeNode(x === undefined ? null : x); });
+    return o;
+  }
+  if(v && typeof v === 'object'){
+    const o = {};
+    Object.keys(v).forEach(k=>{ if(v[k] !== undefined) o[k] = encodeNode(v[k]); });
+    return o;
+  }
+  return v;
+}
+function decodeNode(n){
+  if(n && typeof n === 'object'){
+    if(typeof n._n === 'number'){
+      const arr = [];
+      for(let i=0;i<n._n;i++){
+        const c = n[String(i)];
+        arr.push(c === undefined ? null : decodeNode(c));
+      }
+      return arr;
     }
+    const o = {};
+    Object.keys(n).forEach(k=>{ o[k] = decodeNode(n[k]); });
+    return o;
+  }
+  return n;
+}
+// État de l'appli -> arbre à envoyer (sans les champs locaux, sans undefined).
+function toSyncTree(stateObj){
+  const clean = JSON.parse(JSON.stringify(stateObj));
+  LOCAL_ONLY_KEYS.forEach(k=>{ delete clean[k]; });
+  const tree = encodeNode(truncateOversizedStrings(clean));
+  tree._v = SYNC_VERSION;
+  return tree;
+}
+function pathKey(segs){ return JSON.stringify(segs); }
+// Deux feuilles sont égales si === ; les maps vides ({}) sont aussi des feuilles.
+function sameLeaf(a, b){
+  return a === b || (!!a && !!b && typeof a === 'object' && typeof b === 'object');
+}
+// Arbre -> { "<chemin JSON>": valeur } (une entrée par feuille). Les éléments d'un
+// tableau au-delà de _n (résidus d'une suppression concurrente) sont ignorés.
+function flattenTree(tree){
+  const out = {};
+  function walk(node, segs){
+    if(node && typeof node === 'object'){
+      if(typeof node._n === 'number'){
+        out[pathKey(segs.concat('_n'))] = node._n;
+        for(let i=0;i<node._n;i++){
+          const c = node[String(i)];
+          walk(c === undefined ? null : c, segs.concat(String(i)));
+        }
+        return;
+      }
+      const keys = Object.keys(node);
+      if(keys.length === 0){ out[pathKey(segs)] = {}; return; }
+      keys.forEach(k=>walk(node[k], segs.concat(k)));
+      return;
+    }
+    out[pathKey(segs)] = node;
+  }
+  Object.keys(tree).forEach(k=>{
+    if(k === '_v') return;
+    walk(tree[k], [k]);
+  });
+  return out;
+}
+// { chemin: valeur } -> arbre
+function unflattenToTree(flat){
+  const root = {};
+  Object.keys(flat).forEach(k=>{
+    const segs = JSON.parse(k);
+    let node = root;
+    for(let i=0;i<segs.length-1;i++){
+      const s = segs[i];
+      if(node[s] === undefined || node[s] === null || typeof node[s] !== 'object') node[s] = {};
+      node = node[s];
+    }
+    const v = flat[k];
+    node[segs[segs.length-1]] = (v && typeof v === 'object') ? {} : v;
+  });
+  return root;
+}
+
+/* ---------- Fusion à 3 voies ---------- */
+// base = dernière version serveur connue ; local = état de ce poste ; remote = serveur.
+// Pour chaque champ : si le serveur n'a pas changé -> on ne touche à rien ; s'il a
+// changé et que ce poste ne l'a pas modifié -> on adopte la valeur du serveur ; si les
+// deux ont changé -> on garde la valeur locale (elle sera renvoyée juste après).
+function mergeThreeWay(baseFlat, localFlat, remoteFlat){
+  const merged = Object.assign({}, localFlat);
+  let changed = false;
+  const keys = new Set([].concat(Object.keys(baseFlat), Object.keys(localFlat), Object.keys(remoteFlat)));
+  keys.forEach(k=>{
+    const b = baseFlat[k], l = localFlat[k], r = remoteFlat[k];
+    if(sameLeaf(r, b)) return;   // rien de neuf côté serveur
+    if(!sameLeaf(l, b)) return;  // modifié localement : on garde le local
+    if(r === undefined) delete merged[k]; else merged[k] = r;
+    changed = true;
+  });
+  return { merged, changed };
+}
+
+// Remet l'état reçu dans un état sûr (tailles cohérentes, pas d'élément null) avant
+// de le donner à applyLoadedState, au cas où une fusion produirait une structure
+// incomplète (ex. deux personnes qui ajoutent une équipe adverse au même instant).
+function sanitizeSyncedState(s){
+  const n = (Array.isArray(s.myTeam) && s.myTeam.length) || TEAM_SIZE;
+  const blankPlayer = ()=>({ name:'', faction:'', fd:'' });
+  const blankPair = ()=>({ myList:null, oppList:null, myScore:null, oppScore:null, oppCandidates:[null,null] });
+  const fixArr = (arr, factory)=> resizeArrayTo(Array.isArray(arr) ? arr : [], n, factory)
+    .map(x => (x && typeof x === 'object') ? x : factory());
+  s.myTeam = fixArr(s.myTeam, blankPlayer);
+  s.tables = fixArr(s.tables, ()=>({ mission:'', notes:'' }));
+  s.myFit = resizeMatrixTo(Array.isArray(s.myFit) ? s.myFit : [], n);
+  s.fdMatrix = resizeMatrixTo(Array.isArray(s.fdMatrix) ? s.fdMatrix : [], 5);
+  s.oppTeams = (Array.isArray(s.oppTeams) ? s.oppTeams : []).filter(t => t && typeof t === 'object');
+  s.oppTeams.forEach(ot=>{
+    ot.roster = fixArr(ot.roster, blankPlayer);
+    ot.matchup = resizeMatrixTo(Array.isArray(ot.matchup) ? ot.matchup : [], n);
+    ot.oppFit = resizeMatrixTo(Array.isArray(ot.oppFit) ? ot.oppFit : [], n);
+    ot.pairing = fixArr(ot.pairing, blankPair);
+  });
+  return s;
+}
+// Applique un arbre (déjà fusionné ou reçu tel quel du serveur) à l'appli, en gardant
+// les champs de vue locaux (équipe affichée, onglet, mode) de cet utilisateur.
+function applySyncTree(tree){
+  const t = Object.assign({}, tree);
+  delete t._v;
+  const keep = {};
+  LOCAL_ONLY_KEYS.forEach(k=>{ if(state && state[k] !== undefined) keep[k] = state[k]; });
+  const next = sanitizeSyncedState(decodeNode(t));
+  Object.assign(next, keep);
+  applyingRemoteState = true;
+  try{
+    applyLoadedState(next);
+    renderAll();
+  }finally{
+    applyingRemoteState = false;
   }
 }
 
+/* ---------- Version serveur de référence ---------- */
+function setSyncBase(rawTree){
+  lastSyncedSnapshot = rawTree;
+  lastSyncedFlat = flattenTree(rawTree);
+  persistSyncBaseSoon();
+}
+function getSyncBaseFlat(){
+  if(!lastSyncedSnapshot) return null;
+  if(!lastSyncedFlat) lastSyncedFlat = flattenTree(lastSyncedSnapshot);
+  return lastSyncedFlat;
+}
+let persistBaseTimer = null;
+function persistSyncBaseSoon(){
+  clearTimeout(persistBaseTimer);
+  persistBaseTimer = setTimeout(()=>{
+    try{
+      if(lastSyncedSnapshot) localStorage.setItem(SYNC_BASE_KEY, JSON.stringify(lastSyncedSnapshot));
+      else localStorage.removeItem(SYNC_BASE_KEY);
+    }catch(e){}
+  }, 1500);
+}
+function loadPersistedSyncBase(){
+  try{
+    const raw = localStorage.getItem(SYNC_BASE_KEY);
+    if(!raw) return null;
+    const t = JSON.parse(raw);
+    return (t && t._v === SYNC_VERSION) ? t : null;
+  }catch(e){ return null; }
+}
+// Première ouverture sur cet appareil avec cette version de l'outil : on garde une copie
+// de l'ancienne sauvegarde locale avant de la remplacer par la version du serveur.
+function backupLocalStateOnce(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw) localStorage.setItem(STORAGE_KEY + '-backup-avant-sync-v2', raw);
+  }catch(e){}
+}
+
+/* ---------- Création / migration du document partagé ---------- */
+// Transaction : ne crée/convertit le document que s'il n'est pas déjà au format v2,
+// pour que deux personnes qui arrivent en même temps ne s'écrasent pas.
+async function ensureV2Doc(fallbackState){
+  const ref = STATE_DOC_REF();
+  await db.runTransaction(async tx=>{
+    const s = await tx.get(ref);
+    if(s.exists && s.data()._v === SYNC_VERSION) return;
+    let source;
+    if(s.exists){
+      // Ancien format : converti tel quel (copie de sécurité du document d'origine
+      // dans le stockage local de ce navigateur).
+      try{ localStorage.setItem('w40k-firestore-v1-backup', JSON.stringify(s.data())); }catch(e){}
+      source = decodeMatricesFromFirestore(s.data());
+    }else{
+      source = JSON.parse(JSON.stringify(fallbackState));
+    }
+    tx.set(ref, toSyncTree(source));
+  });
+}
+
+/* ---------- Écoute temps réel ---------- */
+let ensuringDoc = false;
+function onRemoteSnapshot(snap){
+  const raw = snap.exists ? snap.data() : null;
+  if(!raw || raw._v !== SYNC_VERSION){
+    if(ensuringDoc) return;
+    ensuringDoc = true;
+    setCloudIndicator(raw ? '☁ Migration du document partagé…' : '☁ Création du document partagé…');
+    ensureV2Doc(state)
+      .catch(e=>setCloudIndicator('⚠ Initialisation impossible : ' + (e.message || e.code || 'erreur inconnue') + '.', true))
+      .then(()=>{ ensuringDoc = false; });
+    return; // le snapshot suivant (document v2) sera traité normalement
+  }
+
+  const remoteFlat = flattenTree(raw);
+  let baseTree = lastSyncedSnapshot;
+  if(!baseTree){
+    baseTree = loadPersistedSyncBase();
+    if(baseTree){ lastSyncedSnapshot = baseTree; lastSyncedFlat = flattenTree(baseTree); }
+  }
+
+  if(!baseTree){
+    // Aucune référence : le serveur fait foi (on n'écrase JAMAIS le partage avec une copie
+    // locale potentiellement périmée).
+    backupLocalStateOnce();
+    applySyncTree(raw);
+  }else{
+    const localFlat = flattenTree(toSyncTree(state));
+    const res = mergeThreeWay(getSyncBaseFlat(), localFlat, remoteFlat);
+    if(res.changed) applySyncTree(unflattenToTree(res.merged));
+  }
+  setSyncBase(raw);
+  setCloudIndicator('☁ Synchronisé (' + clockLabel() + ')');
+  scheduleStatePush(); // renvoie d'éventuelles modifs locales pas encore parties (sans effet s'il n'y en a pas)
+}
+
+function startStateSync(){
+  if(stateUnsub) return; // déjà en écoute
+  setCloudIndicator('Connexion à Firebase…');
+  stateUnsub = STATE_DOC_REF().onSnapshot(onRemoteSnapshot, err=>{
+    setCloudIndicator('⚠ Connexion à Firebase impossible' + (err && err.code ? ' (' + err.code + ')' : '') + '.', true);
+    // L'écoute est fermée par Firestore après une erreur : on retente un peu plus tard.
+    stateUnsub = null;
+    clearTimeout(stateRetryTimer);
+    stateRetryTimer = setTimeout(()=>{ if(currentUserDoc) startStateSync(); }, 5000);
+  });
+}
+// Coupe l'écoute temps réel : appelé à la déconnexion.
+function stopStateSync(){
+  clearTimeout(stateRetryTimer);
+  clearTimeout(statePushTimer);
+  if(stateUnsub){ stateUnsub(); stateUnsub = null; }
+}
+
+/* ---------- Envoi des modifications locales ---------- */
+// Construit la liste [chemin, valeur, chemin, valeur...] attendue par update() : un
+// chemin par champ modifié (ou FieldValue.delete() pour un champ supprimé).
+function buildUpdateArgs(baseFlat, localFlat){
+  const sets = [], dels = [];
+  Object.keys(localFlat).forEach(k=>{ if(!sameLeaf(baseFlat[k], localFlat[k])) sets.push(k); });
+  Object.keys(baseFlat).forEach(k=>{ if(!(k in localFlat)) dels.push(k); });
+  // Firestore refuse deux chemins dont l'un est le préfixe de l'autre : cas d'une
+  // feuille qui devient une map (ou l'inverse). On garde alors seulement le chemin utile.
+  const setKeys = new Set(sets);
+  const setPrefixes = new Set();
+  sets.forEach(k=>{
+    const segs = JSON.parse(k);
+    for(let l=1;l<segs.length;l++) setPrefixes.add(pathKey(segs.slice(0,l)));
+  });
+  const finalDels = dels.filter(k=>{
+    if(setPrefixes.has(k)) return false;
+    const segs = JSON.parse(k);
+    for(let l=1;l<segs.length;l++){ if(setKeys.has(pathKey(segs.slice(0,l)))) return false; }
+    return true;
+  });
+  const FP = firebase.firestore.FieldPath;
+  const args = [];
+  sets.forEach(k=>{
+    const v = localFlat[k];
+    args.push(new FP(...JSON.parse(k)), (v && typeof v === 'object') ? {} : v);
+  });
+  finalDels.forEach(k=>{
+    args.push(new FP(...JSON.parse(k)), firebase.firestore.FieldValue.delete());
+  });
+  return { args, count: sets.length + finalDels.length };
+}
+
+// Appelé après chaque détection de modification locale, avec un léger débounce.
+function scheduleStatePush(){
+  if(applyingRemoteState) return;
+  if(!currentUserDoc) return; // pas connecté : rien à synchroniser
+  clearTimeout(statePushTimer);
+  statePushTimer = setTimeout(()=>{ pushStateToFirestore(); }, 300);
+}
+
+let pushInFlight = false;
+let pushQueued = false;
+async function pushStateToFirestore(){
+  if(!currentUserDoc) return;
+  // Tant qu'on n'a pas reçu la version serveur, on ne peut pas savoir ce qui a changé :
+  // on n'envoie RIEN (c'est ce qui évite d'écraser le partage à l'ouverture).
+  if(!getSyncBaseFlat()) return;
+  if(pushInFlight){ pushQueued = true; return; }
+  pushInFlight = true;
+  try{
+    do{
+      pushQueued = false;
+      const localFlat = flattenTree(toSyncTree(state));
+      const { args, count } = buildUpdateArgs(getSyncBaseFlat(), localFlat);
+      if(count === 0){
+        setCloudIndicator('☁ Synchronisé (' + clockLabel() + ')');
+        break;
+      }
+      setCloudIndicator('Envoi en cours…');
+      try{
+        await STATE_DOC_REF().update(...args);
+      }catch(e){
+        if(e && e.code === 'not-found'){
+          // Le document a disparu côté serveur : on le recrée à partir de cet état.
+          await ensureV2Doc(state);
+        }else{
+          throw e;
+        }
+      }
+      setCloudIndicator('☁ Envoyé (' + clockLabel() + ')');
+    }while(pushQueued);
+  }catch(e){
+    if(/longer than|exceeds the maximum|1048576/.test(String(e && e.message))){
+      setCloudIndicator('⚠ Données trop volumineuses pour Firestore (limite 1 Mo/document).', true);
+    }else{
+      setCloudIndicator('⚠ Échec de l\'envoi vers Firebase : ' + ((e && (e.message || e.code)) || 'erreur inconnue') + '.', true);
+      // Nouvelle tentative automatique (coupure réseau, etc.), sauf refus de permission.
+      if(!(e && e.code === 'permission-denied')){
+        clearTimeout(statePushTimer);
+        statePushTimer = setTimeout(()=>{ pushStateToFirestore(); }, 5000);
+      }
+    }
+  }finally{
+    pushInFlight = false;
+  }
+}
+
+/* ---------- Détection automatique des modifications locales ---------- */
+// Beaucoup d'actions (choix d'un joueur dans le pairing, scores, cases de matrices, nom
+// d'équipe...) modifient l'état sans passer par renderAll(), donc sans jamais déclencher
+// de sauvegarde ni d'envoi. On compare donc régulièrement l'état à sa dernière version
+// vue, et juste après chaque interaction, pour ne rater aucune modification.
+let lastLocalSerialized = null;
+function checkLocalChanges(){
+  if(!state) return;
+  let s;
+  try{ s = JSON.stringify(state, (k,v)=> k === 'updatedAt' ? undefined : v); }catch(e){ return; }
+  if(s === lastLocalSerialized) return;
+  lastLocalSerialized = s;
+  saveStateToStorage();
+  scheduleStatePush();
+}
+setInterval(checkLocalChanges, 1000);
+['input','change','click','keyup'].forEach(ev=>{
+  document.addEventListener(ev, ()=>{ setTimeout(checkLocalChanges, 60); }, true);
+});
+// On quitte l'onglet / on l'envoie en arrière-plan : on pousse tout de suite.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){ checkLocalChanges(); clearTimeout(statePushTimer); pushStateToFirestore(); }
+});
+window.addEventListener('online', ()=>{ scheduleStatePush(); });
+
+/* ---------- Boutons manuels ---------- */
 // Bouton de diagnostic : affiche dans la page (pas besoin de console) la taille du
 // state actuel, le détail par section, et les chaînes de texte anormalement longues,
 // pour comprendre pourquoi Firestore refuse l'écriture ("données trop volumineuses").
@@ -3433,49 +3823,42 @@ document.getElementById('diagSizeBtn').addEventListener('click', ()=>{
   out.textContent = lignes.join('\n');
 });
 
-// Bouton de secours pour forcer un rechargement manuel depuis le serveur
-// (utile par exemple juste après une coupure réseau).
-document.getElementById('cloudPullBtn').addEventListener('click', async ()=>{
+
+// Recharge explicitement la version du serveur, en remplaçant l'état de cet appareil
+// (utile après une longue coupure réseau, ou après « Effacer les données de cet appareil »).
+async function forceReloadFromServer(){
   setCloudIndicator('Rechargement…');
   try{
-    const snap = await STATE_DOC_REF().get({ source: 'server' });
-    if(!snap.exists){
-      setCloudIndicator('Aucune donnée sur Firebase pour le moment.');
-      return;
+    let snap = await STATE_DOC_REF().get({ source: 'server' });
+    if(!snap.exists || snap.data()._v !== SYNC_VERSION){
+      await ensureV2Doc(state);
+      snap = await STATE_DOC_REF().get({ source: 'server' });
     }
-    // Action explicite et volontaire de l'utilisateur : contrairement à la
-    // synchronisation automatique (startStateSync), on applique ici la version serveur
-    // sans comparaison d'horodatage.
-    hasLocalBaseline = true;
-    applyingRemoteState = true;
-    try{
-      applyLoadedState(decodeMatricesFromFirestore(snap.data()));
-      renderAll();
-    }finally{
-      // Toujours remis à false, même si applyLoadedState/renderAll plante : sinon ce
-      // drapeau reste bloqué à true et bloque silencieusement TOUTE sauvegarde future
-      // (scheduleStatePush s'arrête immédiatement tant qu'il est à true).
-      applyingRemoteState = false;
-    }
-    setCloudIndicator('☁ Rechargé depuis Firebase.');
+    const raw = snap.data();
+    applySyncTree(raw);
+    setSyncBase(raw);
+    setCloudIndicator('☁ Rechargé depuis Firebase (' + clockLabel() + ').');
   }catch(e){
     applyingRemoteState = false;
-    setCloudIndicator('⚠ Connexion à Firebase impossible : ' + (e.message || e.code || 'erreur inconnue') + '.', true);
+    setCloudIndicator('⚠ Connexion à Firebase impossible : ' + ((e && (e.message || e.code)) || 'erreur inconnue') + '.', true);
   }
-});
+}
+document.getElementById('cloudPullBtn').addEventListener('click', forceReloadFromServer);
 
-// Bouton pour forcer un envoi immédiat vers Firebase (sans attendre le débounce de 500ms
-// ni une modification locale) : utile pour vérifier tout de suite que la synchronisation
-// fonctionne, ou pour forcer une sauvegarde avant de fermer l'onglet.
+// Force l'envoi immédiat des modifications locales (sans attendre le débounce).
 document.getElementById('cloudPushBtn').addEventListener('click', async ()=>{
   if(!currentUserDoc){
     setCloudIndicator('⚠ Non connecté : impossible d\'envoyer vers Firebase.', true);
     return;
   }
+  if(!getSyncBaseFlat()){
+    setCloudIndicator('⚠ Pas encore synchronisé avec le serveur : réessaie dans un instant.', true);
+    return;
+  }
   clearTimeout(statePushTimer);
-  setCloudIndicator('Envoi en cours…');
   await pushStateToFirestore();
 });
+
 
 </script>
 
