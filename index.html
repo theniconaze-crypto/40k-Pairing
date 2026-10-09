@@ -487,6 +487,27 @@
   .useradmin-row .uname{flex:1; color:var(--bone);}
   .useradmin-row .ulayouts{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--bone-dim); cursor:pointer; white-space:nowrap;}
   .useradmin-row .urole{color:var(--brass); text-transform:uppercase; font-size:10.5px;}
+  .useradmin-box{max-width:760px;}
+  .useradmin-row{flex-wrap:wrap;}
+  .useradmin-row .ulast{
+    flex:0 0 auto; min-width:128px; text-align:center; padding:3px 7px; font-size:10.5px;
+    border:1px solid var(--line); background:var(--bg-raised); color:var(--bone-dim); white-space:nowrap;
+  }
+  .useradmin-row .ulast.never{color:var(--bone-dim); opacity:.6; font-style:italic;}
+  .useradmin-row .ulast.recent{color:var(--brass-bright); border-color:var(--brass);}
+  #lastLoginsOverlay{
+    position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:9999;
+    display:flex; align-items:center; justify-content:center; padding:20px;
+  }
+  #lastLoginsOverlay.hidden{display:none;}
+  .lastlogins-table{width:100%; border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px; margin-top:12px;}
+  .lastlogins-table th{
+    text-align:left; padding:6px 8px; color:var(--bone-dim); text-transform:uppercase; font-size:10.5px;
+    border-bottom:1px solid var(--brass);
+  }
+  .lastlogins-table td{padding:7px 8px; border-bottom:1px solid var(--line); color:var(--bone);}
+  .lastlogins-table td.rel{color:var(--bone-dim);}
+  .lastlogins-table td.never{color:var(--bone-dim); opacity:.6; font-style:italic;}
   .useradmin-form{display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; align-items:end;}
   .useradmin-form label{
     display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--bone-dim);
@@ -526,6 +547,9 @@
       ne peut plus se connecter), mais ne supprime pas le compte technique sous-jacent dans Firebase ; pour une
       suppression complète, va dans la console Firebase → Authentication.
     </div>
+    <div style="display:flex; justify-content:flex-end; margin:10px 0 4px;">
+      <button class="btn secondary" id="showLastLoginsBtn" type="button" style="padding:4px 10px;font-size:11px;">Voir les dernières connexions</button>
+    </div>
     <div id="userAdminList"></div>
     <div class="useradmin-form">
       <label>Identifiant<input type="text" id="newUserName" autocomplete="off"></label>
@@ -538,6 +562,20 @@
       <button class="btn secondary" id="addUserBtn" type="button">Ajouter le compte</button>
     </div>
     <div class="err" id="userAdminError"></div>
+  </div>
+</div>
+
+<div id="lastLoginsOverlay" class="hidden">
+  <div class="useradmin-box">
+    <button class="close-x" id="closeLastLoginsBtn" type="button">✕</button>
+    <h2 class="section-title" style="margin-top:0;">Dernières connexions</h2>
+    <div class="hint">
+      Horodatage de la dernière ouverture de l'outil par chaque compte (connexion, ou réouverture avec une session
+      encore active). Les comptes qui ne se sont pas connectés depuis la mise en place de ce suivi apparaissent
+      comme « Jamais enregistrée ».
+    </div>
+    <div id="lastLoginsContent"></div>
+    <div class="err" id="lastLoginsError"></div>
   </div>
 </div>
 
@@ -3521,6 +3559,8 @@ function showApp(){
 function showLogin(){
   document.getElementById('appRoot').classList.add('hidden');
   document.getElementById('userAdminOverlay').classList.add('hidden');
+  const llo = document.getElementById('lastLoginsOverlay');
+  if(llo) llo.classList.add('hidden');
   document.getElementById('loginOverlay').classList.remove('hidden');
   const pw = document.getElementById('loginPassword');
   if(pw) pw.value = '';
@@ -3623,6 +3663,32 @@ document.getElementById('logoutBtn').addEventListener('click', ()=>{
 
 /* ---- Gestion des comptes (admin uniquement) ---- */
 const ROLE_LABELS = { admin:'Admin', user:'Complet', matchups:'Matchups uniquement' };
+
+// Horodatage Firestore -> Date (ou null si absent / pas encore résolu côté serveur)
+function lastLoginDate(u){
+  const t = u && u.lastLoginAt;
+  if(!t) return null;
+  if(typeof t.toDate === 'function') return t.toDate();
+  const d = new Date(t);
+  return isNaN(d) ? null : d;
+}
+function formatLastLogin(d){
+  return d.toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+}
+function formatRelative(d){
+  const sec = Math.max(0, Math.round((Date.now() - d.getTime())/1000));
+  if(sec < 60) return "à l'instant";
+  const min = Math.floor(sec/60);
+  if(min < 60) return 'il y a ' + min + ' min';
+  const h = Math.floor(min/60);
+  if(h < 24) return 'il y a ' + h + ' h';
+  const j = Math.floor(h/24);
+  if(j < 30) return 'il y a ' + j + ' j';
+  const m = Math.floor(j/30);
+  if(m < 12) return 'il y a ' + m + ' mois';
+  return 'il y a ' + Math.floor(j/365) + ' an(s)';
+}
+
 async function renderUserAdminList(){
   const container = document.getElementById('userAdminList');
   container.innerHTML = '<div class="hint" style="margin:0;">Chargement…</div>';
@@ -3636,6 +3702,12 @@ async function renderUserAdminList(){
   const docs = snap.docs.map(d=>({ uid:d.id, ...d.data() }));
   container.innerHTML = docs.map(u=>`
     <div class="useradmin-row">
+      ${(()=>{
+        const d = lastLoginDate(u);
+        if(!d) return `<span class="ulast never" title="Dernière connexion">Jamais enregistrée</span>`;
+        const recent = (Date.now() - d.getTime()) < 24*3600*1000;
+        return `<span class="ulast${recent?' recent':''}" title="Dernière connexion : ${escapeHtmlAuth(formatLastLogin(d))} (${escapeHtmlAuth(formatRelative(d))})">${escapeHtmlAuth(formatLastLogin(d))}</span>`;
+      })()}
       <span class="uname">${escapeHtmlAuth(u.username)}</span>
       ${u.username==='admin'
         ? `<span class="urole">${escapeHtmlAuth(ROLE_LABELS[u.role]||u.role)}</span>`
@@ -3694,6 +3766,54 @@ document.getElementById('manageUsersBtn').addEventListener('click', ()=>{
 });
 document.getElementById('closeUserAdminBtn').addEventListener('click', ()=>{
   document.getElementById('userAdminOverlay').classList.add('hidden');
+});
+
+/* ---- Écran « Dernières connexions » (admin uniquement) ---- */
+async function openLastLoginsScreen(){
+  // Double garde côté interface : l'écran n'est accessible que depuis « Gérer les comptes »
+  // (bouton déjà masqué aux non-admins), et on revérifie le rôle ici.
+  if(!currentUserDoc || currentUserDoc.role !== 'admin') return;
+  const content = document.getElementById('lastLoginsContent');
+  const errEl = document.getElementById('lastLoginsError');
+  errEl.textContent = '';
+  content.innerHTML = '<div class="hint" style="margin:0;">Chargement…</div>';
+  document.getElementById('lastLoginsOverlay').classList.remove('hidden');
+  let snap;
+  try{
+    snap = await db.collection('users').get();
+  }catch(e){
+    content.innerHTML = '';
+    errEl.textContent = 'Impossible de charger les connexions : ' + e.message;
+    return;
+  }
+  const users = snap.docs.map(d=>({ uid:d.id, ...d.data() }));
+  // Les plus récentes d'abord ; les comptes sans connexion enregistrée à la fin (ordre alphabétique)
+  users.sort((a,b)=>{
+    const da = lastLoginDate(a), db_ = lastLoginDate(b);
+    if(da && db_) return db_ - da;
+    if(da) return -1;
+    if(db_) return 1;
+    return String(a.username||'').localeCompare(String(b.username||''));
+  });
+  content.innerHTML = `
+    <table class="lastlogins-table">
+      <thead><tr><th>Utilisateur</th><th>Accès</th><th>Dernière connexion</th><th></th></tr></thead>
+      <tbody>
+        ${users.map(u=>{
+          const d = lastLoginDate(u);
+          return `<tr>
+            <td>${escapeHtmlAuth(u.username || u.uid)}</td>
+            <td>${escapeHtmlAuth(ROLE_LABELS[u.role] || u.role || '')}</td>
+            ${d ? `<td>${escapeHtmlAuth(formatLastLogin(d))}</td><td class="rel">${escapeHtmlAuth(formatRelative(d))}</td>`
+                : `<td class="never" colspan="2">Jamais enregistrée</td>`}
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>`;
+}
+document.getElementById('showLastLoginsBtn').addEventListener('click', openLastLoginsScreen);
+document.getElementById('closeLastLoginsBtn').addEventListener('click', ()=>{
+  document.getElementById('lastLoginsOverlay').classList.add('hidden');
 });
 (function(){
   const roleSel = document.getElementById('newUserRole');
@@ -3779,6 +3899,12 @@ fbAuth.onAuthStateChanged(async (user)=>{
     };
     showApp();
     startStateSync();
+    // Horodatage de dernière connexion (consulté par l'admin dans « Gérer les comptes »).
+    // update() (et non set) pour ne pas recréer un profil révoqué ; échec silencieux si les
+    // règles Firestore n'autorisent pas l'écriture, afin de ne jamais bloquer la connexion.
+    db.collection('users').doc(user.uid)
+      .update({ lastLoginAt: firebase.firestore.FieldValue.serverTimestamp() })
+      .catch(err=>console.warn('Horodatage de connexion non enregistré :', err && err.code));
   }catch(e){
     currentUserDoc = null;
     showLogin();
