@@ -485,6 +485,7 @@
     font-family:'IBM Plex Mono',monospace; font-size:12.5px;
   }
   .useradmin-row .uname{flex:1; color:var(--bone);}
+  .useradmin-row .ulayouts{display:flex; align-items:center; gap:5px; font-size:11px; color:var(--bone-dim); cursor:pointer; white-space:nowrap;}
   .useradmin-row .urole{color:var(--brass); text-transform:uppercase; font-size:10.5px;}
   .useradmin-form{display:flex; gap:8px; flex-wrap:wrap; margin-top:16px; align-items:end;}
   .useradmin-form label{
@@ -533,6 +534,7 @@
         <option value="user">Complet</option>
         <option value="matchups">Matchups uniquement</option>
       </select></label>
+      <label class="ulayouts-new" id="newUserLayoutsWrap" style="flex-direction:row;align-items:center;gap:6px;"><input type="checkbox" id="newUserLayouts"> Onglet Layouts</label>
       <button class="btn secondary" id="addUserBtn" type="button">Ajouter le compte</button>
     </div>
     <div class="err" id="userAdminError"></div>
@@ -3527,6 +3529,8 @@ function showLogin(){
 function applyRoleRestrictions(){
   const isAdmin = !!currentUserDoc && currentUserDoc.role === 'admin';
   const matchupsOnly = !!currentUserDoc && currentUserDoc.role === 'matchups';
+  // Droit à cocher (comptes "Matchups uniquement") : accès supplémentaire à l'onglet Layouts
+  const layoutsAccess = !!currentUserDoc && currentUserDoc.layoutsAccess === true;
 
   const who = document.getElementById('sessionWho');
   if(who) who.textContent = currentUserDoc ? `Connecté : ${currentUserDoc.username} (${ROLE_LABELS[currentUserDoc.role] || currentUserDoc.role})` : '';
@@ -3553,7 +3557,8 @@ function applyRoleRestrictions(){
   // globale). Restriction côté interface : voir la note sur les règles de sécurité
   // Firestore si une étanchéité plus stricte est nécessaire.
   document.querySelectorAll('.tab-btn').forEach(btn=>{
-    const allowed = !matchupsOnly || btn.dataset.tab === 'matchups';
+    const allowed = !matchupsOnly || btn.dataset.tab === 'matchups'
+      || (btn.dataset.tab === 'layouts' && layoutsAccess);
     btn.style.display = allowed ? '' : 'none';
   });
   const formatCtrl = document.getElementById('teamSizeSelect');
@@ -3638,6 +3643,9 @@ async function renderUserAdminList(){
              <option value="user" ${u.role==='user'?'selected':''}>Complet</option>
              <option value="matchups" ${u.role==='matchups'?'selected':''}>Matchups uniquement</option>
            </select>`}
+      ${(u.username!=='admin' && u.role==='matchups')
+        ? `<label class="ulayouts" title="Autorise ce compte à ouvrir l'onglet Layouts"><input type="checkbox" class="ulayouts-check" data-uid="${escapeHtmlAuth(u.uid)}" ${u.layoutsAccess===true?'checked':''}> Onglet Layouts</label>`
+        : ''}
       ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.uid)}" data-name="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Révoquer l'accès</button>` : ''}
     </div>
   `).join('');
@@ -3646,8 +3654,20 @@ async function renderUserAdminList(){
       const uid = sel.getAttribute('data-uid');
       try{
         await db.collection('users').doc(uid).update({ role: sel.value });
+        renderUserAdminList(); // affiche/masque la case « Onglet Layouts » selon le rôle
       }catch(e){
         alert('Erreur lors du changement de rôle : ' + e.message);
+        renderUserAdminList();
+      }
+    });
+  });
+  container.querySelectorAll('.ulayouts-check').forEach(chk=>{
+    chk.addEventListener('change', async ()=>{
+      const uid = chk.getAttribute('data-uid');
+      try{
+        await db.collection('users').doc(uid).update({ layoutsAccess: chk.checked });
+      }catch(e){
+        alert('Erreur lors de la modification du droit : ' + e.message);
         renderUserAdminList();
       }
     });
@@ -3675,6 +3695,12 @@ document.getElementById('manageUsersBtn').addEventListener('click', ()=>{
 document.getElementById('closeUserAdminBtn').addEventListener('click', ()=>{
   document.getElementById('userAdminOverlay').classList.add('hidden');
 });
+(function(){
+  const roleSel = document.getElementById('newUserRole');
+  const wrap = document.getElementById('newUserLayoutsWrap');
+  const sync = ()=>{ wrap.style.display = roleSel.value === 'matchups' ? 'flex' : 'none'; };
+  roleSel.addEventListener('change', sync); sync();
+})();
 document.getElementById('addUserBtn').addEventListener('click', async ()=>{
   const uname = document.getElementById('newUserName').value.trim();
   const pass = document.getElementById('newUserPass').value;
@@ -3697,11 +3723,13 @@ document.getElementById('addUserBtn').addEventListener('click', async ()=>{
       username: uname,
       usernameLower: uname.toLowerCase(),
       role: role,
+      layoutsAccess: role === 'matchups' && document.getElementById('newUserLayouts').checked,
       createdAt: firebase.firestore.FieldValue.serverTimestamp(),
       createdBy: (currentUserDoc && currentUserDoc.username) ? currentUserDoc.username : null
     });
     document.getElementById('newUserName').value = '';
     document.getElementById('newUserPass').value = '';
+    document.getElementById('newUserLayouts').checked = false;
     renderUserAdminList();
   }catch(err){
     if(err.code === 'auth/email-already-in-use'){
@@ -3746,7 +3774,8 @@ fbAuth.onAuthStateChanged(async (user)=>{
     currentUserDoc = {
       uid: user.uid,
       username: doc.data().username || fallbackUsername,
-      role: doc.data().role || 'user'
+      role: doc.data().role || 'user',
+      layoutsAccess: doc.data().layoutsAccess === true
     };
     showApp();
     startStateSync();
