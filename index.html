@@ -719,6 +719,7 @@
     <div class="opp-team-bar" id="oppTeamTabsLayouts"></div>
     <div class="matrix-wrap"><table class="matrix layout-matrix" id="layoutMatrix"></table></div>
 
+    <div id="missionsExtraSection">
     <details class="advanced">
       <summary>Avancé — affinité des listes adverses par table (si connue)</summary>
       <div class="inner">
@@ -732,6 +733,7 @@
     <div class="hint">Les 5 Force Dispositions du Chapter Approved 2026-27 (Prise de Position, Purge de l'Ennemi, Reconnaissance, Perturbation, Points Stratégiques — noms officiels FR à confirmer par GW). Note de -3 à +3 à quel point ta disposition prend l'avantage sur celle de l'adversaire, indépendamment des listes (même échelle que le tableau meta faction vs faction ci-dessus). Ce tableau est rempli automatiquement (win rate observé FD contre FD, agrégé sur les tournois disputés depuis le lancement de la V11) à chaque clic sur « 🔎 Rafraîchir la méta » (onglet Configuration ou onglet Matchups) ; tu peux ensuite ajuster chaque case à la main — tes réglages manuels sont conservés jusqu'au prochain rafraîchissement. Optionnel, laisse à 0 si tu préfères t'en tenir au seul matchup de listes.</div>
     <div class="matrix-wrap"><table class="matrix" id="fdMatrix"></table></div>
     <div class="hint" id="fdMatrixStatus" style="margin-top:8px;"></div>
+    </div>
   </div>
 
   <!-- LIVE -->
@@ -3598,13 +3600,17 @@ function applyRoleRestrictions(){
   // Firestore si une étanchéité plus stricte est nécessaire.
   document.querySelectorAll('.tab-btn').forEach(btn=>{
     const allowed = !matchupsOnly || btn.dataset.tab === 'matchups'
-      || (btn.dataset.tab === 'layouts' && layoutsAccess);
+      || ((btn.dataset.tab === 'layouts' || btn.dataset.tab === 'missions') && layoutsAccess);
     btn.style.display = allowed ? '' : 'none';
   });
   const formatCtrl = document.getElementById('teamSizeSelect');
   if(formatCtrl && formatCtrl.closest('.header-controls')){
     formatCtrl.closest('.header-controls').style.display = matchupsOnly ? 'none' : '';
   }
+  // Comptes "Matchups uniquement" avec la case Layouts cochée : dans l'onglet Missions,
+  // seul le tableau des layouts de terrain est visible.
+  const missionsExtra = document.getElementById('missionsExtraSection');
+  if(missionsExtra) missionsExtra.style.display = matchupsOnly ? 'none' : '';
   const advancedFactionMeta = document.querySelector('#panel-matchups details.advanced');
   if(advancedFactionMeta) advancedFactionMeta.style.display = matchupsOnly ? 'none' : '';
 
@@ -3716,7 +3722,7 @@ async function renderUserAdminList(){
              <option value="matchups" ${u.role==='matchups'?'selected':''}>Matchups uniquement</option>
            </select>`}
       ${(u.username!=='admin' && u.role==='matchups')
-        ? `<label class="ulayouts" title="Autorise ce compte à ouvrir l'onglet Layouts"><input type="checkbox" class="ulayouts-check" data-uid="${escapeHtmlAuth(u.uid)}" ${u.layoutsAccess===true?'checked':''}> Onglet Layouts</label>`
+        ? `<label class="ulayouts" title="Autorise ce compte à ouvrir l'onglet Layouts et le tableau des layouts de l'onglet Missions"><input type="checkbox" class="ulayouts-check" data-uid="${escapeHtmlAuth(u.uid)}" ${u.layoutsAccess===true?'checked':''}> Onglet Layouts</label>`
         : ''}
       ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.uid)}" data-name="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Révoquer l'accès</button>` : ''}
     </div>
