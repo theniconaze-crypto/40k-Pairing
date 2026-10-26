@@ -2042,7 +2042,11 @@ function pdfPageStartsPlayer(lines){
      Exported with App Version … (ignoré)
    Le PDF d'origine est composé de pages-images : le texte est alors obtenu par OCR (voir pdfOcrPages). */
 PDF_FACTION_ALIASES.push(['inquisition','Agents of the Imperium'],['imperial agents','Agents of the Imperium'],['agents of the imperium','Agents of the Imperium']);
-const LCC_SKIP_RE = /^(?:joueur\s*\/\s*liste\b|\d+\s+lignes?$|compilation des listes|export(?:ed|é)\b|\d+\s+listes?\b)/i;
+const LCC_SKIP_RE = /^(?:joueur\s*[\/|\\]?\s*liste\b|\d+\s+lignes?$|compilation des listes|export(?:ed|é)\b|\d+\s+listes?\b|page\s*\d+\s*\/\s*\d+$|\d+\s*\/\s*\d+$)/i;
+// Bandeau bleu « Joueur / Liste N » : il ouvre la liste d'un joueur, qui s'étend jusqu'au bandeau suivant.
+const LCC_BANNER_RE = /^[^\w]{0,3}joueur\s*[\/|\\]?\s*liste\b[\s°no.:#-]*\d*\s*$/i;
+// Lignes purement décoratives (« +++++++++ », « ------ », « ====== »)
+const LCC_DECOR_RE = /^[+\-=_*~•·.\s]{3,}$/;
 const LCC_META_RE = /^(?:attached as|attach[ée]e? en tant que|enhancements?|optimisations?|warlord|seigneur de guerre|leader\b)/i;
 const LCC_SECTION_SUB_RE = /^(?:attached units?|unit[ée]s? attach[ée]e?s?)(?:\s*\d+)?$/i;
 function lccHeaderMatch(l){
@@ -2050,12 +2054,14 @@ function lccHeaderMatch(l){
   if(!m) return null;
   const key = pdfNormKey(m[1]);
   if(/^(playername|teamname|equipe|team|nom|name)/.test(key)) return null;
+  if(/^(factions?(utilisees?)?|points(darmee)?|ameliorations?(darmee)?|detachements?|detachment|enhancements?|armyfaction|forcedisposition|dispositiondeforce)$/.test(key)) return null;
   const path = m[2].trim();
   if(path.indexOf(':') !== -1) return null;
   if(!(/^(?:Imperium|Chaos|Xenos)\b/i.test(path) || pdfMatchFaction(path))) return null;
   return { name: m[1].replace(/^[^\w]+/, '').trim(), path };
 }
 function lccDetectLines(lines){
+  if(lines.some(l=>LCC_BANNER_RE.test(String(l||'').trim()))) return true;
   return lines.some(l=>lccHeaderMatch(l)) && lines.some(l=>/joueur\s*\/\s*liste|compilation des listes|\(\s*\d[\d\s]*\s*(?:points?)\s*\)/i.test(l));
 }
 function lccDetectFd(line){
@@ -2095,19 +2101,29 @@ function lccBuildPlayer(hdr, body){
   const rest = [];
   body.forEach(l=>{
     let m;
-    if((m = l.match(/^[^\w]{0,3}player\s*name\s*:\s*(.+)$/i))){ playerName = m[1].trim(); return; }
-    if((m = l.match(/^[^\w]{0,3}team\s*name\s*:\s*(.+)$/i))){ teamCand = teamCand || m[1].trim(); return; }
+    if((m = l.match(/^[^\w]{0,3}(?:player\s*name|nom\s+du\s+joueur)\s*:\s*(.+)$/i))){ playerName = m[1].trim(); return; }
+    if((m = l.match(/^[^\w]{0,3}(?:team\s*name|nom\s+de\s+l['’]?\s*[ée]quipe)\s*:\s*(.+)$/i))){ teamCand = teamCand || m[1].trim(); return; }
     if((m = l.match(/^[^\w]{0,3}[ée]quipe\s+(.+?)\s*(?:\((.+)\))?\s*$/i)) && !/\d\s*(points?)/i.test(l)){ teamCand = (m[2] || m[1]).trim(); return; }
     rest.push(l);
   });
   const head = rest.slice(0, 12);
   let faction = pdfMatchFaction(hdr.path), factionRaw = hdr.path;
   if(!faction){
+    for(const l of rest.slice(0,12)){
+      const fm = l.match(/^[^\w]{0,3}factions?\s+utilis[ée]es?\s*:\s*(.+)$/i);
+      if(fm){ const f = pdfMatchFaction(fm[1]); if(f){ faction = f; factionRaw = fm[1].trim(); break; } }
+    }
+  }
+  if(!faction){
     for(const l of head.slice(0,5)){ const f = pdfMatchFaction(l); if(f){ faction = f; break; } }
   }
   let fd = '';
   const di = head.findIndex(l=>/\(\s*\d+\s*(?:detachment points?|points? de d[ée]tachement)\s*\)/i.test(l));
   if(di >= 0 && head[di+1]) fd = lccDetectFd(head[di+1]);
+  if(!fd) for(const l of rest.slice(0,25)){
+    const dm = l.match(/(?:force\s+disposition|disposition\s+de\s+force)s?\s*:\s*(.+)$/i);
+    if(dm){ fd = lccDetectFd(dm[1]); if(fd) break; }
+  }
   if(!fd) for(const l of head){ if(l.length < 40){ fd = lccDetectFd(l); if(fd) break; } }
   // Mise en forme : en-tête de liste (avant la 1re section) → « Infos », puis le corps
   const fmt = rest.map(lccFormatLine);
@@ -2118,15 +2134,36 @@ function lccBuildPlayer(hdr, body){
   return { player: { name: playerName || hdr.name, faction, factionRaw, fd, points:'', armyList }, teamCand };
 }
 function lccParseLines(allLines){
-  const lines = allLines.map(l=>String(l||'').trim()).filter(l=>l && !LCC_SKIP_RE.test(l) && l.replace(/\s/g,'').length > 3);
-  const lists = []; let cur = null;
-  lines.forEach(l=>{
-    const h = lccHeaderMatch(l);
-    if(h){ cur = { hdr: h, body: [] }; lists.push(cur); }
-    else if(cur) cur.body.push(l);
-  });
+  const raw = allLines.map(l=>String(l||'').trim());
+  const hasBanner = raw.some(l=>LCC_BANNER_RE.test(l));
+  const keep = l=> l && !LCC_SKIP_RE.test(l) && !LCC_DECOR_RE.test(l) && l.replace(/\s/g,'').length > 3;
+  const lists = [];
+  if(hasBanner){
+    // Découpage par bandeau bleu « Joueur / Liste N » : la liste d'un joueur va de son bandeau jusqu'au bandeau suivant.
+    let cur = null;
+    raw.forEach(l=>{
+      if(LCC_BANNER_RE.test(l)){ cur = { banner: l, lines: [] }; lists.push(cur); return; }
+      if(cur && keep(l)) cur.lines.push(l);
+    });
+    lists.forEach((li, k)=>{
+      const m = li.banner.match(/(\d+)\s*$/);
+      li.num = m ? m[1] : String(k+1);
+      const hi = li.lines.findIndex(l=>lccHeaderMatch(l));
+      if(hi >= 0){ li.hdr = lccHeaderMatch(li.lines[hi]); li.body = li.lines.filter((_,x)=>x !== hi); }
+      else { li.hdr = { name: 'Joueur ' + li.num, path: '' }; li.body = li.lines; }
+    });
+  } else {
+    // Ancien format sans bandeau : une liste commence à chaque ligne « Pseudo : Faction ».
+    let cur = null;
+    raw.filter(keep).forEach(l=>{
+      const h = lccHeaderMatch(l);
+      if(h){ cur = { hdr: h, body: [] }; lists.push(cur); }
+      else if(cur) cur.body.push(l);
+    });
+  }
   const players = [], cands = [];
   lists.forEach(li=>{
+    if(hasBanner && !li.lines.length) return; // bandeau sans contenu
     const r = lccBuildPlayer(li.hdr, li.body);
     players.push(r.player);
     if(r.teamCand) cands.push(r.teamCand);
