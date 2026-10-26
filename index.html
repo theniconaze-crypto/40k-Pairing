@@ -125,6 +125,12 @@
     border:1px solid var(--brass); padding:1px 5px; margin-left:6px; vertical-align:middle;
   }
 
+  .fac-tag{
+    display:inline-block; font-family:'IBM Plex Mono',monospace; font-size:9.5px; font-weight:600;
+    letter-spacing:.04em; color:var(--bone-dim); background:var(--bg-raised);
+    border:1px solid var(--line); padding:1px 5px; margin-left:6px; vertical-align:middle;
+  }
+
   /* Matrix */
   .matrix-wrap{overflow-x:auto; border:1px solid var(--line);}
   table.matrix{border-collapse:collapse; font-family:'IBM Plex Mono',monospace; font-size:12px;}
@@ -2695,6 +2701,27 @@ function renderTableRoster(){
   });
 }
 
+// Abréviation de faction (EC = Emperor's Children, CSM = Chaos Space Marines…), affichée à côté du nom du joueur.
+const FACTION_ABBR = {
+  'Adepta Sororitas':'AS','Adeptus Custodes':'AC','Adeptus Mechanicus':'AdMech','Agents of the Imperium':'AoI',
+  'Astra Militarum':'AM','Black Templars':'BT','Blood Angels':'BA','Dark Angels':'DA','Deathwatch':'DW',
+  'Grey Knights':'GK','Imperial Knights':'IK','Space Marines':'SM','Space Wolves':'SW',
+  'Chaos Daemons':'CD','Chaos Knights':'CK','Chaos Space Marines':'CSM','Death Guard':'DG',
+  "Emperor's Children":'EC','Thousand Sons':'TS','World Eaters':'WE',
+  'Aeldari':'AE','Drukhari':'DRU','Genestealer Cults':'GSC','Leagues of Votann':'LoV',
+  'Necrons':'NEC','Orks':'ORK',"T'au Empire":'TAU','Tyranids':'TYR'
+};
+function factionAbbr(faction){
+  const f = String(faction||'').trim();
+  if(!f) return '';
+  if(FACTION_ABBR[f]) return FACTION_ABBR[f];
+  const w = f.split(/[\s-]+/).filter(x=>/^[A-Za-zÀ-ÿ]/.test(x) && !/^(of|the|de|des|du|la|le)$/i.test(x));
+  return w.length > 1 ? w.map(x=>x[0].toUpperCase()).join('') : f.slice(0,4).toUpperCase();
+}
+function factionTagHtml(entry){
+  const a = entry ? factionAbbr(entry.faction) : '';
+  return a ? `<span class="fac-tag" title="${String(entry.faction).replace(/"/g,'&quot;')}">${a}</span>` : '';
+}
 function displayName(entry, fallback){
   return entry.name && entry.name.trim() ? entry.name : fallback;
 }
@@ -3802,7 +3829,7 @@ function renderLive(){
     if(p.myList!==null){
       const myEntry = state.myTeam[p.myList];
       const myFdTag = myEntry.fd ? `<span class="fd-tag">${FD_LABELS_FR[myEntry.fd]}</span>` : '';
-      html += `<div class="slot"><span class="side">Moi</span><span class="val">${displayName(myEntry,'Joueur '+(p.myList+1))}${myFdTag}</span>
+      html += `<div class="slot"><span class="side">Moi</span><span class="val">${displayName(myEntry,'Joueur '+(p.myList+1))}${factionTagHtml(myEntry)}${myFdTag}</span>
         <button class="x" data-action="clearMy" data-t="${tIdx}">✕</button></div>`;
     } else {
       const options = [...Array(TEAM_SIZE).keys()].filter(i=>!myUsedArr.has(i));
@@ -3818,7 +3845,7 @@ function renderLive(){
         const mood = p.oppList!==null ? moodBadgeHtml(c.myIdx, p.oppList) : '';
         html += `<div class="rec-choice${rank===0?' best':''}">
           <div class="rec-label">${rank===0?'① Meilleur choix':'② Second choix'} · score ${c.value.toFixed(1)}${mood}</div>
-          <div class="rec-name">${displayName(entry,'Joueur '+(c.myIdx+1))}${fdTag}</div>
+          <div class="rec-name">${displayName(entry,'Joueur '+(c.myIdx+1))}${factionTagHtml(entry)}${fdTag}</div>
           <button class="btn${rank===0?'':' secondary'}" data-action="setMyChoice" data-t="${tIdx}" data-my="${c.myIdx}">Valider ce choix</button>
         </div>`;
       });
@@ -3835,7 +3862,7 @@ function renderLive(){
     if(p.oppList!==null){
       const oppEntry = liveOppTeam().roster[p.oppList];
       const oppFdTag = oppEntry.fd ? `<span class="fd-tag">${FD_LABELS_FR[oppEntry.fd]}</span>` : '';
-      html += `<div class="slot"><span class="side">Adv.</span><span class="val">${displayName(oppEntry,'Adv. '+(p.oppList+1))}${oppFdTag}</span>
+      html += `<div class="slot"><span class="side">Adv.</span><span class="val">${displayName(oppEntry,'Adv. '+(p.oppList+1))}${factionTagHtml(oppEntry)}${oppFdTag}</span>
         <button class="x" data-action="clearOpp" data-t="${tIdx}">✕</button></div>`;
     } else {
       const optionsO = [...Array(TEAM_SIZE).keys()].filter(j=>!oppUsedArr.has(j));
@@ -3872,12 +3899,12 @@ function renderLive(){
           html += `<div class="rec-choices">
             <div class="rec-choice${bestIsC0?' best':''}">
               <div class="rec-label">${bestIsC0?'① Meilleur choix pour toi':'② Second choix'} · score ${s0>=0?'+':''}${s0.toFixed(1)}${mood0}</div>
-              <div class="rec-name">${displayName(oppEntry0,'Adv. '+(c0+1))}${oppFdTag0}</div>
+              <div class="rec-name">${displayName(oppEntry0,'Adv. '+(c0+1))}${factionTagHtml(oppEntry0)}${oppFdTag0}</div>
               <button class="btn${bestIsC0?'':' secondary'}" data-action="chooseOppAttacker" data-t="${tIdx}" data-opp="${c0}">Choisir cet adversaire</button>
             </div>
             <div class="rec-choice${!bestIsC0?' best':''}">
               <div class="rec-label">${!bestIsC0?'① Meilleur choix pour toi':'② Second choix'} · score ${s1>=0?'+':''}${s1.toFixed(1)}${mood1}</div>
-              <div class="rec-name">${displayName(oppEntry1,'Adv. '+(c1+1))}${oppFdTag1}</div>
+              <div class="rec-name">${displayName(oppEntry1,'Adv. '+(c1+1))}${factionTagHtml(oppEntry1)}${oppFdTag1}</div>
               <button class="btn${!bestIsC0?'':' secondary'}" data-action="chooseOppAttacker" data-t="${tIdx}" data-opp="${c1}">Choisir cet adversaire</button>
             </div>
           </div>`;
