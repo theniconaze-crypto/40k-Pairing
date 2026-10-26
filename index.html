@@ -2028,6 +2028,175 @@ function pdfPageStartsPlayer(lines){
   // Sans total de points lisible : une faction reconnue dans les premières lignes + un en-tête de liste.
   return lines.slice(0,6).some(l=>pdfMatchFaction(l)) && lines.length > 6;
 }
+/* ---------- Format « Compilation des listes » (export harmonisé de l'outil de l'équipe) ----------
+   Une liste par joueur, dans cet ordre :
+     [bandeau « Joueur / Liste N » + « 118 lignes »]        (ignorés)
+     Pseudo : Faction - Sous-faction                          ← ligne d'en-tête (délimite chaque liste)
+     [PLAYER NAME: …] [TEAM NAME: …] [Equipe XXX (Nom complet)]   (optionnels)
+     Nom de la liste (1 995 points)
+     Faction
+     Détachement (3 Detachment Points | 3 Points de Détachement)
+     Force Disposition                                         (ex. Reconnaissance, Take and Hold, Prendre et Tenir)
+     Strike Force (2 000 points)
+     SECTIONS (ATTACHED UNITS, CHARACTERS, OTHER DATASHEETS, TRANSPORTS…) puis unités « Nom (N points) » + lignes • / Nx
+     Exported with App Version … (ignoré)
+   Le PDF d'origine est composé de pages-images : le texte est alors obtenu par OCR (voir pdfOcrPages). */
+PDF_FACTION_ALIASES.push(['inquisition','Agents of the Imperium'],['imperial agents','Agents of the Imperium'],['agents of the imperium','Agents of the Imperium']);
+const LCC_SKIP_RE = /^(?:joueur\s*\/\s*liste\b|\d+\s+lignes?$|compilation des listes|export(?:ed|é)\b|\d+\s+listes?\b)/i;
+const LCC_META_RE = /^(?:attached as|attach[ée]e? en tant que|enhancements?|optimisations?|warlord|seigneur de guerre|leader\b)/i;
+const LCC_SECTION_SUB_RE = /^(?:attached units?|unit[ée]s? attach[ée]e?s?)(?:\s*\d+)?$/i;
+function lccHeaderMatch(l){
+  const m = String(l||'').match(/^[^\w]{0,3}(.{1,40}?)\s*:\s*(.{3,80})$/);
+  if(!m) return null;
+  const key = pdfNormKey(m[1]);
+  if(/^(playername|teamname|equipe|team|nom|name)/.test(key)) return null;
+  const path = m[2].trim();
+  if(path.indexOf(':') !== -1) return null;
+  if(!(/^(?:Imperium|Chaos|Xenos)\b/i.test(path) || pdfMatchFaction(path))) return null;
+  return { name: m[1].replace(/^[^\w]+/, '').trim(), path };
+}
+function lccDetectLines(lines){
+  return lines.some(l=>lccHeaderMatch(l)) && lines.some(l=>/joueur\s*\/\s*liste|compilation des listes|\(\s*\d[\d\s]*\s*(?:points?)\s*\)/i.test(l));
+}
+function lccDetectFd(line){
+  const k = pdfNormKey(line);
+  if(!k) return '';
+  const d = pdfDetectFd(line);
+  if(d) return d;
+  if(k.indexOf('prendreettenir') !== -1 || k.indexOf('prendretenir') !== -1) return 'Take and Hold';
+  if(/purg/.test(k)) return 'Purge the Foe';
+  if(/perturb|disrupt/.test(k)) return 'Disruption';
+  if(/priorit/.test(k)) return 'Priority Assets';
+  if(/reconn?aiss?ance/.test(k)) return 'Reconnaissance';
+  return '';
+}
+function lccIsSection(t){
+  const c = t.replace(/[\s.:;,]+$/,'');
+  if(PDF_SECTION_WORDS.test(c)) return true;
+  return c.length >= 5 && /^[A-ZÀ-Ý][A-ZÀ-Ý'’\- ]+$/.test(c) && !/\d/.test(c);
+}
+const LCC_BULLET_RE = /^(?:[«»¢°*+•·●▪‣◦©]|e(?=\s+\d))\s*/;
+function lccFormatLine(raw){
+  let t = raw.trim();
+  if(!t) return '';
+  if(lccIsSection(t)) return '\n== ' + t.replace(/[\s.:;,]+$/,'') + ' ==';
+  if(LCC_SECTION_SUB_RE.test(t)) return '\n== ' + t + ' ==';
+  const bulleted = LCC_BULLET_RE.test(t);
+  if(bulleted) t = t.replace(LCC_BULLET_RE, '');
+  t = t.replace(/^(\d+)\s*[xX×]\s+/, '$1x ');
+  const pm = t.match(/^(.*?\S)\s*\(\s*(\d[\d\s ]*)\s*(?:pts?|points?)\s*\)\s*$/i);
+  if(pm) return pm[1].trim() + ' · ' + pm[2].replace(/[\s ]/g,'') + ' pts';
+  if(bulleted || LCC_META_RE.test(t)) return '  ' + (bulleted ? '• ' : '') + t;
+  if(/^\d+x\s/.test(t)) return '    ' + t;
+  return t;
+}
+function lccBuildPlayer(hdr, body){
+  let playerName = '', teamCand = '';
+  const rest = [];
+  body.forEach(l=>{
+    let m;
+    if((m = l.match(/^[^\w]{0,3}player\s*name\s*:\s*(.+)$/i))){ playerName = m[1].trim(); return; }
+    if((m = l.match(/^[^\w]{0,3}team\s*name\s*:\s*(.+)$/i))){ teamCand = teamCand || m[1].trim(); return; }
+    if((m = l.match(/^[^\w]{0,3}[ée]quipe\s+(.+?)\s*(?:\((.+)\))?\s*$/i)) && !/\d\s*(points?)/i.test(l)){ teamCand = (m[2] || m[1]).trim(); return; }
+    rest.push(l);
+  });
+  const head = rest.slice(0, 12);
+  let faction = pdfMatchFaction(hdr.path), factionRaw = hdr.path;
+  if(!faction){
+    for(const l of head.slice(0,5)){ const f = pdfMatchFaction(l); if(f){ faction = f; break; } }
+  }
+  let fd = '';
+  const di = head.findIndex(l=>/\(\s*\d+\s*(?:detachment points?|points? de d[ée]tachement)\s*\)/i.test(l));
+  if(di >= 0 && head[di+1]) fd = lccDetectFd(head[di+1]);
+  if(!fd) for(const l of head){ if(l.length < 40){ fd = lccDetectFd(l); if(fd) break; } }
+  // Mise en forme : en-tête de liste (avant la 1re section) → « Infos », puis le corps
+  const fmt = rest.map(lccFormatLine);
+  const firstSec = fmt.findIndex(l=>/^\n?== /.test(l));
+  const infos = (firstSec >= 0 ? fmt.slice(0, firstSec) : fmt.slice(0, 5)).filter(Boolean).map(l=>'  ' + l.trim());
+  const bodyLines = firstSec >= 0 ? fmt.slice(firstSec) : fmt.slice(5);
+  const armyList = ['== Infos =='].concat(infos, [''], bodyLines).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  return { player: { name: playerName || hdr.name, faction, factionRaw, fd, points:'', armyList }, teamCand };
+}
+function lccParseLines(allLines){
+  const lines = allLines.map(l=>String(l||'').trim()).filter(l=>l && !LCC_SKIP_RE.test(l) && l.replace(/\s/g,'').length > 3);
+  const lists = []; let cur = null;
+  lines.forEach(l=>{
+    const h = lccHeaderMatch(l);
+    if(h){ cur = { hdr: h, body: [] }; lists.push(cur); }
+    else if(cur) cur.body.push(l);
+  });
+  const players = [], cands = [];
+  lists.forEach(li=>{
+    const r = lccBuildPlayer(li.hdr, li.body);
+    players.push(r.player);
+    if(r.teamCand) cands.push(r.teamCand);
+  });
+  if(!players.length) return [];
+  // Une seule équipe par PDF : on retient le nom le plus complet trouvé (« Equipe LCC (Les Chevaliers Crétins) » > « TEAM NAME: LCC »).
+  const name = cands.sort((a,b)=>b.length - a.length)[0] || 'Équipe importée';
+  return [{ name, key: pdfNormKey(name) || 'x', players }];
+}
+function lccParsePages(pages){ return lccParseLines([].concat(...pages)); }
+
+/* ---------- OCR (PDF fait d'images : aucun texte exploitable) ---------- */
+const TESSERACT_URL = 'https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js';
+let tesseractPromise = null;
+function loadTesseract(){
+  if(window.Tesseract) return Promise.resolve(window.Tesseract);
+  if(!tesseractPromise){
+    tesseractPromise = new Promise((resolve, reject)=>{
+      const sc = document.createElement('script');
+      sc.src = TESSERACT_URL;
+      sc.onload = ()=> window.Tesseract ? resolve(window.Tesseract) : reject(new Error('Tesseract introuvable'));
+      sc.onerror = ()=>{ tesseractPromise = null; reject(new Error('Impossible de charger la librairie OCR (connexion internet requise).')); };
+      document.head.appendChild(sc);
+    });
+  }
+  return tesseractPromise;
+}
+// Vrai si presque aucune page ne contient de texte autre que le pied de page (« Compilation des listes — Page 3 / 22 »).
+function pdfLooksScanned(pages){
+  if(!pages.length) return false;
+  const real = pages.filter(lines=>lines.filter(l=>!/^compilation des listes|^page\s*\d+\s*\/\s*\d+$|^\d+\s*\/\s*\d+$/i.test(l.replace(/\s+/g,' ').trim())).join('').length > 40).length;
+  return real / pages.length < 0.3;
+}
+function pdfOcrStatus(msg){
+  let el = document.getElementById('pdfOcrStatus');
+  if(!msg){ if(el) el.remove(); return; }
+  if(!el){
+    el = document.createElement('div'); el.id = 'pdfOcrStatus';
+    el.style.cssText = 'position:fixed; left:50%; bottom:24px; transform:translateX(-50%); z-index:400; background:var(--bg-panel); border:1px solid var(--brass); border-left:4px solid var(--brass); color:var(--bone); padding:10px 16px; font-family:"IBM Plex Mono",monospace; font-size:12px; box-shadow:0 4px 18px rgba(0,0,0,.5);';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+}
+async function pdfOcrPages(arrayBuffer){
+  const pdfjs = await loadPdfJs();
+  pdfOcrStatus('Chargement du moteur OCR…');
+  const T = await loadTesseract();
+  const worker = await T.createWorker('eng');
+  try{
+    try{ await worker.setParameters({ tessedit_pageseg_mode: '6' }); }catch(_){}
+    const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    const pages = [];
+    for(let n=1; n<=doc.numPages; n++){
+      pdfOcrStatus(`Lecture OCR du PDF (image) : page ${n} / ${doc.numPages}…`);
+      const page = await doc.getPage(n);
+      const vp = page.getViewport({ scale: 2.3 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(vp.width); canvas.height = Math.ceil(vp.height);
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+      const res = await worker.recognize(canvas);
+      pages.push(String(res.data.text||'').split('\n').map(l=>l.replace(/\s+/g,' ').trim()).filter(Boolean));
+      canvas.width = canvas.height = 0;
+    }
+    return pages;
+  } finally {
+    try{ await worker.terminate(); }catch(_){}
+    pdfOcrStatus('');
+  }
+}
+
 function pdfParseTeams(pages){
   const teams = [];
   let cur = null, pending = null;
@@ -2263,10 +2432,12 @@ document.getElementById('pdfImportInput').addEventListener('change', async e=>{
   document.body.style.cursor = 'progress';
   try{
     const buf = await file.arrayBuffer();
-    const pages = await pdfExtractPages(buf);
-    const teams = pdfParseTeams(pages);
+    let pages = await pdfExtractPages(buf);
+    if(pdfLooksScanned(pages)) pages = await pdfOcrPages(buf);
+    let teams = lccDetectLines([].concat(...pages)) ? lccParsePages(pages) : [];
+    if(!teams.length) teams = pdfParseTeams(pages);
     if(!teams.length){
-      alert('Aucune liste détectée dans ce PDF (format attendu : export Sigdex, une page par joueur).');
+      alert('Aucune liste détectée dans ce PDF (formats reconnus : « Compilation des listes » ou export Sigdex, une page par joueur).');
       return;
     }
     pdfImportCtx = { context, teams, fileName: file.name, myQuery: '', myIdx: -1, target: null };
@@ -2403,6 +2574,10 @@ function textParseTeams(text, mode){
     else cur.lines.push(l);
   });
   sections.push(cur);
+  if((mode || 'auto') === 'auto'){
+    const all = norm.split('\n');
+    if(lccDetectLines(all)){ const t = lccParseLines(all); if(t.length) return t; }
+  }
   const teams = [];
   sections.forEach((sec, si)=>{
     const nonEmpty = sec.lines.filter(l=>l.trim() && !TXT_SEP_RE.test(l));
