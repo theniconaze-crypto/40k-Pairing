@@ -252,6 +252,13 @@
   .modal-body textarea:focus{outline:1px solid var(--brass-bright);}
   .modal-foot{display:flex; justify-content:flex-end; gap:10px; padding:12px 18px; border-top:1px solid var(--line); flex:0 0 auto;}
 
+  /* Import texte brut (modale) */
+  #textImportBody select{width:100%; padding:9px 10px; background:var(--bg-raised); border:1px solid var(--line); color:var(--bone); font-size:14px; margin-bottom:12px;}
+  #textImportBody textarea{min-height:260px; margin-bottom:10px;}
+  .txtimp-help{font-size:12px; color:var(--bone-dim); line-height:1.55;}
+  .txtimp-help code{font-family:'IBM Plex Mono',monospace; background:var(--bg-raised); padding:1px 5px; border:1px solid var(--line); font-size:11px;}
+  .txtimp-help ul{margin:6px 0 0 18px; padding:0;}
+
   /* Import PDF (modale) */
   #pdfImportBody input[type=text], #pdfImportBody select{width:100%; padding:9px 10px; background:var(--bg-raised); border:1px solid var(--line); color:var(--bone); font-size:14px;}
   #pdfImportBody input[type=text]:focus, #pdfImportBody select:focus{outline:1px solid var(--brass-bright);}
@@ -658,6 +665,7 @@
       <button class="btn secondary" id="randomizeMyTeamBtn">🎲 Générer mon équipe (meilleur roster meta)</button>
       <button class="btn secondary" id="importMyRosterBtn">📥 Importer mon équipe (fichier HTML)</button>
       <button class="btn secondary" id="importMyRosterPdfBtn">📄 Importer mon équipe (PDF)</button>
+      <button class="btn secondary" id="importMyRosterTextBtn">📝 Importer mon équipe (texte brut)</button>
     </div>
     <div class="hint">Le bouton d'import lit un fichier HTML de roster (type export AUSPEX/Cogitator envoyé par un joueur ou un capitaine) et remplit automatiquement noms, factions, Force Dispositions, et attache la liste d'armée complète de chaque joueur (visible via l'icône 📄 sur sa ligne).</div>
     <div class="hint">Tire au sort un roster complet en favorisant les factions les mieux classées dans la méta (tableau de puissance ci-dessus, aussi visible sous forme de matchups dans l'onglet Matchups) : plus une faction est forte, plus elle a de chances d'être choisie — sans jamais dupliquer une faction dans l'équipe, comme l'exige le réglement des tournois en équipe (WTC/ETC/FEQ, formats 6 et 8 joueurs) : les chapitres Space Marines (Blood Angels, Dark Angels, Space Wolves, Black Templars, Deathwatch, Space Marines) comptent tous pour une seule et même faction et ne peuvent donc pas cohabiter dans le roster généré. Chaque Force Disposition doit être représentée au moins une fois dans l'équipe et ne peut jamais l'être plus de deux fois : les places disponibles au-delà d'un exemplaire de chacune sont attribuées en priorité aux FD qui ressortent le mieux, en moyenne, dans la grille « Affinité par Force Disposition » ci-dessous.</div>
@@ -669,6 +677,7 @@
       <button class="btn secondary" id="randomizeOppTeamBtn">🎲 Générer aléatoirement l'équipe adverse active</button>
       <button class="btn secondary" id="randomizeAllOppTeamsBtn">🎲 Générer aléatoirement toutes les équipes adverses</button>
       <button class="btn secondary" id="importAllTeamsPdfBtn">📄 Importer toutes les équipes (PDF compilé)</button>
+      <button class="btn secondary" id="importAllTeamsTextBtn">📝 Importer toutes les équipes (texte brut)</button>
     </div>
     <div class="hint">Import PDF : si le PDF contient une seule équipe, tu choisis où l'importer ; s'il en contient plusieurs (PDF compilé), tu indiques le nom de ta propre équipe et les autres équipes (jusqu'à 5) sont réparties automatiquement en équipes adverses, avec leurs joueurs, factions, Force Dispositions et listes d'armée.</div>
     <div class="hint">Un bouton « 📥 Importer ce roster (fichier HTML) » est aussi disponible directement dans le panneau de l'équipe adverse active ci-dessous, pour importer le roster envoyé par cette équipe.</div>
@@ -854,6 +863,40 @@
 <input type="file" id="rosterImportInput" accept=".html,.htm,text/html" style="display:none">
 <!-- Import de roster(s) depuis un PDF (1 équipe ou PDF compilé de plusieurs équipes) -->
 <input type="file" id="pdfImportInput" accept=".pdf,application/pdf" style="display:none">
+<!-- Import de roster(s) depuis du texte brut collé (formats libres) -->
+<div class="modal-overlay hidden" id="textImportOverlay">
+  <div class="modal-box">
+    <div class="modal-head">
+      <div>
+        <h3>Import texte brut</h3>
+        <div class="sub" id="textImportSub"></div>
+      </div>
+      <div class="modal-head-actions"><button class="modal-close" id="textImportCloseX" type="button">✕</button></div>
+    </div>
+    <div class="modal-body" id="textImportBody">
+      <div class="pdfimp-label">Mode de lecture</div>
+      <select id="textImportMode">
+        <option value="auto">Automatique (détecte le format)</option>
+        <option value="lines">Un joueur par ligne (nom, faction, FD séparés par - ; | tab…)</option>
+        <option value="blocks">Une liste d'armée complète par joueur (blocs séparés)</option>
+      </select>
+      <textarea id="textImportTextarea" spellcheck="false" placeholder="Colle ici le texte du roster, quel que soit son format…"></textarea>
+      <div class="txtimp-help">
+        <b>Formats reconnus</b> (mélangeables) :
+        <ul>
+          <li>Une ligne par joueur : <code>Jean Dupont - Necrons - Take and Hold</code>, <code>1. Jean (Orks) [Purge the Foe]</code>, <code>Jean;Orks;Disruption</code>, ligne de tableau copiée depuis Excel (tabulations)</li>
+          <li>Listes d'armée complètes (app GW, Battlescribe, New Recruit…) : sépare chaque joueur par une ligne <code>---</code> (ou <code>Joueur 2</code>). Le nom est lu sur <code>Nom: …</code> / <code>Jean (2000 points)</code> / la 1re ligne ; faction et FD sont détectés dans l'en-tête, ou via <code>Faction: …</code> / <code>FD: …</code></li>
+          <li>Plusieurs équipes : commence chaque équipe par une ligne <code>Équipe : Nom</code> (ou <code>Team: Nom</code>)</li>
+        </ul>
+        Une prévisualisation te permet de vérifier avant d'écraser quoi que ce soit.
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn secondary" id="textImportCancelBtn" type="button">Annuler</button>
+      <button class="btn" id="textImportParseBtn" type="button">Analyser →</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay hidden" id="pdfImportOverlay">
   <div class="modal-box">
     <div class="modal-head">
@@ -1414,6 +1457,7 @@ function renderOppTeamPanel(){
     <div class="toolbar">
       <button class="btn secondary" id="importOppRosterBtn">📥 Importer ce roster (fichier HTML)</button>
       <button class="btn secondary" id="importOppRosterPdfBtn">📄 Importer ce roster (PDF)</button>
+      <button class="btn secondary" id="importOppRosterTextBtn">📝 Importer ce roster (texte brut)</button>
     </div>
     <div class="roster-grid" id="oppRosterActive"></div>
   `;
@@ -1429,6 +1473,7 @@ function renderOppTeamPanel(){
   document.getElementById('oppTeamDeleteBtn').addEventListener('click', ()=>removeOppTeam(idx));
   document.getElementById('importOppRosterBtn').addEventListener('click', ()=>triggerRosterImport(ot.roster, ot.name||('Équipe adverse '+(idx+1))));
   document.getElementById('importOppRosterPdfBtn').addEventListener('click', ()=>triggerPdfImport('opp:'+idx));
+  document.getElementById('importOppRosterTextBtn').addEventListener('click', ()=>openTextImportModal('opp:'+idx));
   renderRoster('oppRosterActive', ot.roster);
 }
 function renderLiveOppSelect(){
@@ -2241,6 +2286,183 @@ document.getElementById('pdfImportConfirmBtn').addEventListener('click', applyPd
 document.getElementById('pdfImportCancelBtn').addEventListener('click', closePdfImportModal);
 document.getElementById('pdfImportCloseX').addEventListener('click', closePdfImportModal);
 document.getElementById('pdfImportOverlay').addEventListener('click', e=>{ if(e.target.id === 'pdfImportOverlay') closePdfImportModal(); });
+
+/* ---------- Import texte brut (formats libres) : réutilise la modale de prévisualisation de l'import PDF ---------- */
+const TXT_TEAM_RE = /^\s*(?:#+\s*)?(?:équipe|equipe|team)\s*\d*\s*[:\-–—=]\s*(.+?)\s*$/i;
+const TXT_SEP_RE = /^\s*[-=_*~#]{3,}\s*$/;
+const TXT_PLAYER_START_RE = /^\s*(?:joueur|player)\s*\d+\b/i;
+const TXT_FD_ALIASES = [
+  ['takeandhold','Take and Hold'],['takehold','Take and Hold'],['hold','Take and Hold'],['th','Take and Hold'],
+  ['purgethefoe','Purge the Foe'],['purge','Purge the Foe'],['ptf','Purge the Foe'],
+  ['recon','Reconnaissance'],['disrupt','Disruption'],
+  ['priorityassets','Priority Assets'],['priority','Priority Assets'],['assets','Priority Assets']
+];
+function textStripNum(s){
+  return String(s||'').replace(/^\s*(?:\d{1,2}\s*[.)]|\d{1,2}\s*[-–:]|#\d{1,2})\s+/, '').trim();
+}
+function textStripLabel(s){
+  return String(s||'').replace(/^\s*(?:joueur|player|nom|name|capitaine|captain)\s*\d*\s*[:=]\s*/i, '').trim();
+}
+// FD dans un champ isolé : nom officiel / libellé FR (pdfDetectFd) ou alias court en correspondance exacte.
+function textDetectFdField(f){
+  const d = pdfDetectFd(f);
+  if(d) return d;
+  const k = pdfNormKey(f);
+  const a = TXT_FD_ALIASES.find(x=>x[0] === k);
+  return a ? a[1] : '';
+}
+// « Jean Dupont - Necrons - Take and Hold » (ou ; | tab , ( ) [ ]) → { name, faction, factionRaw, fd }
+function textParsePlayerLine(line){
+  let s = String(line||'').replace(/\b\d{3,4}\s*(?:\/\s*\d{3,4}\s*)?(?:pts?|points)\b/ig, ' ');
+  s = textStripNum(s);
+  let fields;
+  if(/\t/.test(s)) fields = s.split(/\t/);
+  else if(/;/.test(s)) fields = s.split(/;/);
+  else if(/\|/.test(s)) fields = s.split(/\|/);
+  else fields = s.split(/[\(\)\[\]]|\s[-–—·:]\s|,/);
+  fields = fields.map(f=>f.trim()).filter(Boolean);
+  let faction = '', factionRaw = '', fd = '';
+  const rest = [];
+  fields.forEach(f=>{
+    const ff = pdfMatchFaction(f);
+    if(ff){ if(!faction){ faction = ff; factionRaw = f; } return; }
+    const d = textDetectFdField(f);
+    if(d){ if(!fd) fd = d; return; }
+    rest.push(f);
+  });
+  const name = textStripLabel(rest[0] || '');
+  if(!faction && rest[1]) factionRaw = rest[1];
+  return { name, faction, factionRaw, fd };
+}
+function textSplitBlocks(lines){
+  const blocks = []; let cur = [];
+  const push = ()=>{ if(cur.some(l=>l.trim())) blocks.push(cur); cur = []; };
+  lines.forEach(l=>{
+    if(TXT_SEP_RE.test(l)){ push(); return; }
+    if(TXT_PLAYER_START_RE.test(l) && cur.some(x=>x.trim())) push();
+    cur.push(l);
+  });
+  push();
+  return blocks;
+}
+// Un bloc de lignes (liste d'armée complète d'un joueur) → joueur
+function textBuildPlayer(rawLines){
+  const lines = rawLines.map(l=>l.replace(/\s+$/,''));
+  while(lines.length && !lines[0].trim()) lines.shift();
+  while(lines.length && !lines[lines.length-1].trim()) lines.pop();
+  if(!lines.length) return null;
+  const top = lines.map(l=>l.trim()).filter(Boolean).slice(0, 14);
+  let name = '', faction = '', factionRaw = '', fd = '', consumedFirst = false;
+  // Lignes étiquetées : "Nom: …", "Faction: …", "FD: …"
+  top.forEach(l=>{
+    let m;
+    if(!name && (m = l.match(/^(?:joueur|player|nom|name|capitaine|captain)\s*\d*\s*[:=\-–—]\s*(.+)$/i))) name = textStripNum(m[1]);
+    if(!factionRaw && (m = l.match(/^(?:faction|arm[ée]e|army)\s*[:=]\s*(.+)$/i))){ factionRaw = m[1].trim(); faction = pdfMatchFaction(factionRaw); }
+    if(!fd && (m = l.match(/^(?:fd|force\s*disposition|disposition)\s*[:=]\s*(.+)$/i))) fd = textDetectFdField(m[1]) || pdfDetectFd(m[1]);
+  });
+  // 1re ligne de type "Jean - Necrons - Take and Hold" : nom/faction/FD y sont lus directement.
+  const p0 = textParsePlayerLine(top[0]);
+  if(p0.faction && p0.name && /[\t;|\-–—·,\(\)\[\]]/.test(top[0]) && !pdfIsSectionLine(top[0])){
+    if(!name) name = p0.name;
+    if(!faction){ faction = p0.faction; factionRaw = p0.factionRaw; }
+    if(!fd) fd = p0.fd;
+    consumedFirst = true;
+  }
+  if(!faction){
+    for(const l of top){
+      if(l.length > 80) continue;
+      const f = pdfMatchFaction(l);
+      if(f){ faction = f; factionRaw = l; break; }
+    }
+  }
+  if(!fd) fd = pdfDetectFd(top.join(' '));
+  if(!name){
+    const l = top[0];
+    let m0 = null;
+    for(const re of PDF_NAME_PTS){ m0 = l.match(re); if(m0) break; }
+    if(m0 && m0[1].trim() && !pdfMatchFaction(m0[1])) name = textStripNum(m0[1]);
+    else if(l.length <= 60 && !pdfMatchFaction(l) && !/^\d+\s*x\b/i.test(l)) name = textStripNum(l);
+    else { const hdr = pdfFindPlayerHeader(top); if(hdr) name = hdr.name; }
+  }
+  const body = (consumedFirst ? lines.slice(lines.findIndex(l=>l.trim())+1) : lines).map(raw=>{
+    const t = raw.trim();
+    if(!t) return '';
+    const c = pdfListLine(t);
+    return c === t ? raw : c;
+  });
+  const armyList = body.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  const onlyHeader = lines.filter(l=>l.trim()).length <= 1;
+  return { name, faction, factionRaw, fd, points:'', armyList: onlyHeader ? '' : armyList };
+}
+function textParseTeams(text, mode){
+  const norm = String(text||'').replace(/\r\n?/g, '\n').replace(/\f/g, '\n---\n');
+  const sections = []; let cur = { name:'', lines:[] };
+  norm.split('\n').forEach(l=>{
+    const m = l.match(TXT_TEAM_RE);
+    if(m){ sections.push(cur); cur = { name: m[1].trim(), lines: [] }; }
+    else cur.lines.push(l);
+  });
+  sections.push(cur);
+  const teams = [];
+  sections.forEach((sec, si)=>{
+    const nonEmpty = sec.lines.filter(l=>l.trim() && !TXT_SEP_RE.test(l));
+    if(!nonEmpty.length) return;
+    let m = mode || 'auto';
+    if(m === 'auto'){
+      const playerish = nonEmpty.filter(l=>l.trim().length <= 120 && pdfMatchFaction(l));
+      m = playerish.length / nonEmpty.length >= 0.7 ? 'lines' : 'blocks';
+    }
+    let players;
+    if(m === 'lines'){
+      players = nonEmpty.map(textParsePlayerLine).filter(p=>p.name || p.faction || p.factionRaw || p.fd)
+        .map(p=>Object.assign({ points:'', armyList:'' }, p));
+    } else {
+      players = textSplitBlocks(sec.lines).map(textBuildPlayer).filter(Boolean);
+    }
+    if(!players.length) return;
+    const name = sec.name || 'Équipe importée';
+    teams.push({ name, key: pdfNormKey(name) || ('t'+si), players });
+  });
+  return teams;
+}
+let textImportContext = 'all';
+function openTextImportModal(context){
+  textImportContext = context || 'all';
+  document.getElementById('textImportSub').textContent =
+    context === 'my' ? 'Destination : Mon équipe (modifiable à l\'étape suivante)' :
+    (context && context.indexOf('opp:') === 0) ? 'Destination : équipe adverse active (modifiable à l\'étape suivante)' :
+    'Une ou plusieurs équipes — la destination se choisit à l\'étape suivante';
+  document.getElementById('textImportOverlay').classList.remove('hidden');
+  const ta = document.getElementById('textImportTextarea');
+  setTimeout(()=>ta.focus(), 30);
+}
+function closeTextImportModal(){
+  document.getElementById('textImportOverlay').classList.add('hidden');
+}
+document.getElementById('textImportParseBtn').addEventListener('click', ()=>{
+  const text = document.getElementById('textImportTextarea').value;
+  if(!text.trim()){ alert('Colle d\'abord le texte du roster.'); return; }
+  const mode = document.getElementById('textImportMode').value;
+  let teams;
+  try{ teams = textParseTeams(text, mode); }
+  catch(err){ alert('Impossible d\'analyser ce texte : ' + (err && err.message ? err.message : err)); return; }
+  if(!teams.length){
+    alert('Aucun joueur détecté. Essaie un autre mode de lecture, ou sépare chaque joueur par une ligne « --- » (une liste d\'armée par bloc), ou mets un joueur par ligne.');
+    return;
+  }
+  const context = textImportContext;
+  pdfImportCtx = { context, teams, fileName: 'texte collé', myQuery: '', myIdx: -1, target: null };
+  if(teams.length === 1){
+    pdfImportCtx.target = context === 'my' ? 'my' : (context.indexOf('opp:') === 0 ? context : null);
+  }
+  document.getElementById('pdfImportTitle').textContent = teams.length === 1 ? 'Import texte — une équipe' : 'Import texte — plusieurs équipes';
+  closeTextImportModal();
+  document.getElementById('pdfImportOverlay').classList.remove('hidden');
+  renderPdfImportModal();
+});
+document.getElementById('textImportCancelBtn').addEventListener('click', closeTextImportModal);
+document.getElementById('textImportCloseX').addEventListener('click', closeTextImportModal);
+document.getElementById('textImportOverlay').addEventListener('click', e=>{ if(e.target.id === 'textImportOverlay') closeTextImportModal(); });
 
 function renderTableRoster(){
   const el = document.getElementById('tableRoster');
@@ -3680,6 +3902,8 @@ document.getElementById('randomizeTableNamesBtn').addEventListener('click', ()=>
 });
 document.getElementById('importMyRosterPdfBtn').addEventListener('click', ()=>triggerPdfImport('my'));
 document.getElementById('importAllTeamsPdfBtn').addEventListener('click', ()=>triggerPdfImport('all'));
+document.getElementById('importMyRosterTextBtn').addEventListener('click', ()=>openTextImportModal('my'));
+document.getElementById('importAllTeamsTextBtn').addEventListener('click', ()=>openTextImportModal('all'));
 document.getElementById('importMyRosterBtn').addEventListener('click', ()=>{
   triggerRosterImport(state.myTeam, 'Mon équipe');
 });
