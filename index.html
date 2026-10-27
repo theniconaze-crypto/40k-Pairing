@@ -2010,6 +2010,7 @@ function pdfBuildPlayer(pageLinesArr){
       if(pi === 0 && li < startAt) return;
       if(/^Created with\b|^App Version|^Server Version|^Data Version/i.test(l)) return;
       if(/^\d{1,3}$/.test(l)) return; // numéro de page isolé
+      if(pdfIsPageFooter(l)) return; // pied de page « … Page 2 / 23 »
       out.push(l);
     });
   });
@@ -2048,6 +2049,9 @@ function pdfPageStartsPlayer(lines){
      Exported with App Version … (ignoré)
    Le PDF d'origine est composé de pages-images : le texte est alors obtenu par OCR (voir pdfOcrPages). */
 PDF_FACTION_ALIASES.push(['inquisition','Agents of the Imperium'],['imperial agents','Agents of the Imperium'],['agents of the imperium','Agents of the Imperium']);
+// Pied de page de pagination, avec ou sans texte devant (« Les Citrons du Warp Page 2 / 23 », « Compilation des listes — Page 3 / 22 », « Page 2 sur 23 »…). Tolère les erreurs d'OCR (« | », « l », « 1 »).
+const PDF_PAGE_FOOTER_RE = /(?:^|[\s\-–—·|,;:])page\s*\d{1,3}\s*(?:[\/|\\lI!]|of|sur)?\s*\d{1,3}\s*$/i;
+function pdfIsPageFooter(l){ return PDF_PAGE_FOOTER_RE.test(String(l||'').replace(/\s+/g,' ').trim()); }
 const LCC_SKIP_RE = /^(?:joueur\s*[\/|\\]?\s*liste\b|\d+\s+lignes?$|compilation des listes|export(?:ed|é)\b|\d+\s+listes?\b|page\s*\d+\s*\/\s*\d+$|\d+\s*\/\s*\d+$)/i;
 // Bandeau bleu « Joueur / Liste N » : il ouvre la liste d'un joueur, qui s'étend jusqu'au bandeau suivant.
 const LCC_BANNER_RE = /^[^\w]{0,3}joueur\s*[\/|\\]?\s*liste\b[\s°no.:#-]*\d*\s*$/i;
@@ -2142,7 +2146,7 @@ function lccBuildPlayer(hdr, body){
 function lccParseLines(allLines){
   const raw = allLines.map(l=>String(l||'').trim());
   const hasBanner = raw.some(l=>LCC_BANNER_RE.test(l));
-  const keep = l=> l && !LCC_SKIP_RE.test(l) && !LCC_DECOR_RE.test(l) && l.replace(/\s/g,'').length > 3;
+  const keep = l=> l && !LCC_SKIP_RE.test(l) && !pdfIsPageFooter(l) && !LCC_DECOR_RE.test(l) && l.replace(/\s/g,'').length > 3;
   const lists = [];
   if(hasBanner){
     // Découpage par bandeau bleu « Joueur / Liste N » : la liste d'un joueur va de son bandeau jusqu'au bandeau suivant.
@@ -2200,7 +2204,7 @@ function loadTesseract(){
 // Vrai si presque aucune page ne contient de texte autre que le pied de page (« Compilation des listes — Page 3 / 22 »).
 function pdfLooksScanned(pages){
   if(!pages.length) return false;
-  const real = pages.filter(lines=>lines.filter(l=>!/^compilation des listes|^page\s*\d+\s*\/\s*\d+$|^\d+\s*\/\s*\d+$/i.test(l.replace(/\s+/g,' ').trim())).join('').length > 40).length;
+  const real = pages.filter(lines=>lines.filter(l=>!pdfIsPageFooter(l) && !/^compilation des listes|^page\s*\d+\s*\/\s*\d+$|^\d+\s*\/\s*\d+$/i.test(l.replace(/\s+/g,' ').trim())).join('').length > 40).length;
   return real / pages.length < 0.3;
 }
 function pdfOcrStatus(msg){
