@@ -4985,7 +4985,8 @@ fbAuth.onAuthStateChanged(async (user)=>{
       uid: user.uid,
       username: doc.data().username || fallbackUsername,
       role: doc.data().role || 'user',
-      layoutsAccess: doc.data().layoutsAccess === true
+      layoutsAccess: doc.data().layoutsAccess === true,
+      strangeAccess: doc.data().strangeAccess === true
     };
     showApp();
     startStateSync();
