@@ -4646,7 +4646,9 @@ function applyRoleRestrictions(){
 
   const manageBtn = document.getElementById('manageUsersBtn');
   if(manageBtn) manageBtn.style.display = isAdmin ? '' : 'none';
-  ['strangeBtn','strangeResult'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display = isAdmin ? '' : 'none'; });
+  // Docteur Strange : admin, ou compte à qui l'admin a coché le droit
+  const strangeAccess = isAdmin || (!!currentUserDoc && currentUserDoc.strangeAccess === true);
+  ['strangeBtn','strangeResult'].forEach(id=>{ const el=document.getElementById(id); if(el) el.style.display = strangeAccess ? '' : 'none'; });
 
   // Réservé à l'admin : réglages de la clé API Gemini + rafraîchissement de la méta
   ['toggleGeminiSettingsBtn','toggleGeminiSettingsBtn2'].forEach(id=>{
@@ -4792,6 +4794,9 @@ async function renderUserAdminList(){
       ${(u.username!=='admin' && u.role==='matchups')
         ? `<label class="ulayouts" title="Autorise ce compte à ouvrir l'onglet Layouts et le tableau des layouts de l'onglet Missions"><input type="checkbox" class="ulayouts-check" data-uid="${escapeHtmlAuth(u.uid)}" ${u.layoutsAccess===true?'checked':''}> Onglet Layouts</label>`
         : ''}
+      ${u.username!=='admin'
+        ? `<label class="ulayouts" title="Autorise ce compte à utiliser le bouton Docteur Strange dans le Pairing en direct"><input type="checkbox" class="ustrange-check" data-uid="${escapeHtmlAuth(u.uid)}" ${u.strangeAccess===true?'checked':''}> Docteur Strange</label>`
+        : ''}
       ${u.username!=='admin' ? `<button class="btn secondary" data-del="${escapeHtmlAuth(u.uid)}" data-name="${escapeHtmlAuth(u.username)}" type="button" style="padding:3px 8px;font-size:11px;">Révoquer l'accès</button>` : ''}
     </div>
   `).join('');
@@ -4803,6 +4808,17 @@ async function renderUserAdminList(){
         renderUserAdminList(); // affiche/masque la case « Onglet Layouts » selon le rôle
       }catch(e){
         alert('Erreur lors du changement de rôle : ' + e.message);
+        renderUserAdminList();
+      }
+    });
+  });
+  container.querySelectorAll('.ustrange-check').forEach(chk=>{
+    chk.addEventListener('change', async ()=>{
+      const uid = chk.getAttribute('data-uid');
+      try{
+        await db.collection('users').doc(uid).update({ strangeAccess: chk.checked });
+      }catch(e){
+        alert('Erreur lors de la modification du droit : ' + e.message);
         renderUserAdminList();
       }
     });
