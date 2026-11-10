@@ -557,6 +557,26 @@
     display:flex; flex-direction:column; gap:4px; font-size:11px; color:var(--bone-dim);
     font-family:'IBM Plex Mono',monospace; text-transform:uppercase;
   }
+
+  /* Onglet Stats */
+  .stats-scroll{overflow-x:auto; border:1px solid var(--line); margin-bottom:8px;}
+  table.stats{border-collapse:collapse; width:100%; font-family:'IBM Plex Mono',monospace; font-size:12px;}
+  table.stats th, table.stats td{border:1px solid var(--line); padding:8px 10px; text-align:center; vertical-align:middle;}
+  table.stats th{background:var(--bg-panel); color:var(--brass); font-weight:500; font-size:11px; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap;}
+  table.stats td.rowhead{background:var(--bg-panel); text-align:left; white-space:nowrap; font-family:'IBM Plex Sans',sans-serif; font-weight:600; color:var(--bone);}
+  table.stats td.rowhead small{display:block; font-weight:400; color:var(--bone-dim); font-size:10.5px;}
+  table.stats tr.total td{background:var(--bg-raised); font-weight:600; border-top:2px solid var(--brass);}
+  table.stats td.win{background:rgba(95,122,79,.22);}
+  table.stats td.loss{background:rgba(163,53,47,.22);}
+  table.stats td.draw{background:rgba(201,138,44,.18);}
+  table.stats td.none{color:var(--bone-dim);}
+  table.stats td .sc{font-size:14px; font-weight:600;}
+  table.stats td .vs{display:block; font-size:10px; color:var(--bone-dim); margin-top:2px; max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-left:auto; margin-right:auto;}
+  .res-badge{display:inline-block; padding:2px 8px; font-size:10.5px; font-weight:600; letter-spacing:.05em; border:1px solid var(--line);}
+  .res-badge.win{color:var(--green-bright); border-color:var(--green-bright);}
+  .res-badge.loss{color:var(--red-bright); border-color:var(--red-bright);}
+  .res-badge.draw{color:var(--amber); border-color:var(--amber);}
+  .pos{color:var(--green-bright);} .neg{color:var(--red-bright);}
 </style>
 </head>
 <body>
@@ -651,6 +671,7 @@
     <button class="tab-btn" data-tab="live">4. Pairing en direct</button>
     <button class="tab-btn" data-tab="results">5. Résultats Réels Pairing</button>
     <button class="tab-btn" data-tab="layouts">6. Layouts</button>
+    <button class="tab-btn" data-tab="stats">7. Stats</button>
   </div>
 
   <!-- SETUP -->
@@ -835,6 +856,20 @@
     <div class="toolbar">
       <button class="btn secondary" id="resetResults">Réinitialiser les résultats saisis</button>
     </div>
+  </div>
+
+  <!-- STATS -->
+  <div class="panel" id="panel-stats">
+    <h2 class="section-title">Stats — bilan global</h2>
+    <div class="hint">Calculées automatiquement à partir des scores saisis dans l'onglet « 5. Résultats Réels Pairing ». Chaque équipe adverse correspond à une ronde. Seules les tables dont les deux scores sont renseignés sont comptées.</div>
+    <div class="totals" id="statsGlobal"></div>
+
+    <h2 class="section-title">Résultat de chaque ronde</h2>
+    <div class="stats-scroll" id="statsRounds"></div>
+
+    <h2 class="section-title">Total de chaque joueur face à chaque équipe</h2>
+    <div class="hint">Chaque case indique « score du joueur – score de l'adversaire » (avec l'adversaire affronté en dessous). Vert = victoire à la table, rouge = défaite, orange = égalité.</div>
+    <div class="stats-scroll" id="statsPlayers"></div>
   </div>
 
   <!-- LAYOUTS -->
@@ -4099,6 +4134,105 @@ function updateResultsTotals(){
   filledEl.textContent = filled + '/' + TEAM_SIZE;
 }
 
+// Onglet « 7. Stats » : synthèse des résultats réels (scores saisis dans l'onglet 5).
+// Une ronde = une équipe adverse. Une table n'est comptée que si les deux scores sont saisis.
+function renderStats(){
+  const elG = document.getElementById('statsGlobal');
+  const elR = document.getElementById('statsRounds');
+  const elP = document.getElementById('statsPlayers');
+  if(!elG || !elR || !elP) return;
+
+  const isNum = v => v!==null && v!==undefined && v!=='' && !isNaN(v);
+  const sgn = n => (n>0?'+':'')+n;
+  const cls = n => n>0?'pos':(n<0?'neg':'');
+  const resOf = (a,b) => a>b?'win':(a<b?'loss':'draw');
+  const resLabel = {win:'Victoire', loss:'Défaite', draw:'Égalité'};
+
+  const nOpp = state.oppTeams.length;
+  const oppName = (ot,i)=> ot.name && ot.name.trim() ? ot.name : 'Équipe adverse '+(i+1);
+
+  // Agrégats
+  const rounds = state.oppTeams.map((ot,i)=>{
+    let my=0, opp=0, played=0, tw=0, tl=0, td=0;
+    ot.pairing.forEach(p=>{
+      if(p.myList===null || p.oppList===null || !isNum(p.myScore) || !isNum(p.oppScore)) return;
+      played++; my+=p.myScore; opp+=p.oppScore;
+      if(p.myScore>p.oppScore) tw++; else if(p.myScore<p.oppScore) tl++; else td++;
+    });
+    return {name:oppName(ot,i), my, opp, played, tw, tl, td};
+  });
+  const playedRounds = rounds.filter(r=>r.played>0);
+  const gMy = rounds.reduce((a,r)=>a+r.my,0), gOpp = rounds.reduce((a,r)=>a+r.opp,0);
+  const gTW = rounds.reduce((a,r)=>a+r.tw,0), gTL = rounds.reduce((a,r)=>a+r.tl,0), gTD = rounds.reduce((a,r)=>a+r.td,0);
+  const rW = playedRounds.filter(r=>r.my>r.opp).length, rL = playedRounds.filter(r=>r.my<r.opp).length, rD = playedRounds.length-rW-rL;
+
+  elG.innerHTML = `
+    <div class="stat"><span class="v">${rW}-${rD}-${rL}</span><span class="l">Rondes V-N-D</span></div>
+    <div class="stat"><span class="v">${gTW}-${gTD}-${gTL}</span><span class="l">Tables V-N-D</span></div>
+    <div class="stat"><span class="v">${gMy}</span><span class="l">Points marqués</span></div>
+    <div class="stat"><span class="v">${gOpp}</span><span class="l">Points encaissés</span></div>
+    <div class="stat"><span class="v ${cls(gMy-gOpp)}">${sgn(gMy-gOpp)}</span><span class="l">Différentiel</span></div>`;
+
+  // Tableau par ronde
+  if(playedRounds.length===0){
+    elR.innerHTML = '<div class="hint" style="padding:12px;margin:0;">Aucun résultat saisi pour l\'instant. Renseigne les scores dans l\'onglet « 5. Résultats Réels Pairing ».</div>';
+  } else {
+    let h = `<table class="stats"><thead><tr><th style="text-align:left">Ronde / Adversaire</th><th>Tables jouées</th><th>Tables V-N-D</th><th>Mon équipe</th><th>Adversaire</th><th>Écart</th><th>Résultat</th></tr></thead><tbody>`;
+    rounds.forEach((r,i)=>{
+      if(r.played===0){
+        h += `<tr><td class="rowhead">Ronde ${i+1} — ${escapeHtml(r.name)}</td><td class="none" colspan="6">Pas encore de résultat</td></tr>`;
+        return;
+      }
+      const res = resOf(r.my,r.opp);
+      h += `<tr><td class="rowhead">Ronde ${i+1} — ${escapeHtml(r.name)}</td>
+        <td>${r.played}/${TEAM_SIZE}</td><td>${r.tw}-${r.td}-${r.tl}</td>
+        <td class="sc"><b>${r.my}</b></td><td><b>${r.opp}</b></td>
+        <td class="${cls(r.my-r.opp)}"><b>${sgn(r.my-r.opp)}</b></td>
+        <td><span class="res-badge ${res}">${resLabel[res]}</span></td></tr>`;
+    });
+    h += `<tr class="total"><td class="rowhead">TOTAL</td><td>${rounds.reduce((a,r)=>a+r.played,0)}</td><td>${gTW}-${gTD}-${gTL}</td>
+      <td>${gMy}</td><td>${gOpp}</td><td class="${cls(gMy-gOpp)}">${sgn(gMy-gOpp)}</td><td>${rW}-${rD}-${rL}</td></tr>`;
+    h += '</tbody></table>';
+    elR.innerHTML = h;
+  }
+
+  // Tableau joueur × équipe adverse
+  let h = `<table class="stats"><thead><tr><th style="text-align:left">Joueur</th>`;
+  state.oppTeams.forEach((ot,i)=>{ h += `<th>R${i+1} · ${escapeHtml(oppName(ot,i))}</th>`; });
+  h += `<th>Total pour</th><th>Total contre</th><th>Écart</th><th>V-N-D</th></tr></thead><tbody>`;
+  const colTot = Array.from({length:nOpp}, ()=>({my:0,opp:0,n:0}));
+  state.myTeam.forEach((me,pi)=>{
+    const name = displayName(me,'Joueur '+(pi+1));
+    let tMy=0, tOpp=0, w=0, d=0, l=0;
+    let row = `<tr><td class="rowhead">${escapeHtml(name)}${me.faction?`<small>${escapeHtml(me.faction)}</small>`:''}</td>`;
+    state.oppTeams.forEach((ot,oi)=>{
+      let my=0, opp=0, n=0, vs=[];
+      ot.pairing.forEach(p=>{
+        if(p.myList!==pi || p.oppList===null || !isNum(p.myScore) || !isNum(p.oppScore)) return;
+        my+=p.myScore; opp+=p.oppScore; n++;
+        const oe = ot.roster[p.oppList];
+        vs.push(escapeHtml(displayName(oe,'Adv. '+(p.oppList+1)) + (oe.faction?' · '+oe.faction:'')));
+      });
+      if(n===0){ row += '<td class="none">—</td>'; return; }
+      const r = resOf(my,opp);
+      if(r==='win') w++; else if(r==='loss') l++; else d++;
+      tMy+=my; tOpp+=opp;
+      colTot[oi].my+=my; colTot[oi].opp+=opp; colTot[oi].n++;
+      row += `<td class="${r}"><span class="sc">${my}–${opp}</span><span class="vs" title="${vs.join(' / ')}">${vs.join(' / ')}</span></td>`;
+    });
+    row += `<td><b>${tMy}</b></td><td><b>${tOpp}</b></td><td class="${cls(tMy-tOpp)}"><b>${sgn(tMy-tOpp)}</b></td><td>${w}-${d}-${l}</td></tr>`;
+    h += row;
+  });
+  // Ligne total équipe
+  h += `<tr class="total"><td class="rowhead">TOTAL ÉQUIPE</td>`;
+  colTot.forEach(c=>{
+    h += c.n===0 ? '<td class="none">—</td>' : `<td><span class="sc">${c.my}–${c.opp}</span></td>`;
+  });
+  h += `<td>${gMy}</td><td>${gOpp}</td><td class="${cls(gMy-gOpp)}">${sgn(gMy-gOpp)}</td><td>${gTW}-${gTD}-${gTL}</td></tr>`;
+  h += '</tbody></table>';
+  elP.innerHTML = h;
+}
+
 /* ---------- Tabs ---------- */
 document.querySelectorAll('.tab-btn').forEach(btn=>{
   btn.addEventListener('click', ()=>{
@@ -4109,6 +4243,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     if(btn.dataset.tab==='live') renderLive();
     if(btn.dataset.tab==='results') renderResults();
     if(btn.dataset.tab==='layouts') renderLayoutsTab();
+    if(btn.dataset.tab==='stats') renderStats();
   });
 });
 
@@ -4534,6 +4669,7 @@ function renderAllInner(){
   document.getElementById('modeSelect').value = state.mode;
   renderLive();
   renderResults();
+  renderStats();
 }
 
 // renderAllInner recrée tout le DOM (innerHTML=''), ce qui fait perdre le focus/curseur
