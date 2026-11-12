@@ -809,6 +809,10 @@
   <!-- LIVE -->
   <div class="panel" id="panel-live">
     <div class="live-opp-row">
+      <label for="liveRoundSelect">Numéro de la ronde :</label>
+      <select id="liveRoundSelect"></select>
+    </div>
+    <div class="live-opp-row">
       <label for="liveOppSelect">Adversaire de ce round :</label>
       <select id="liveOppSelect"></select>
     </div>
@@ -1180,6 +1184,9 @@ function makePairingArray(){
 function makeOppTeam(n){
   return {
     name: 'Équipe adverse '+n,
+    // Numéro de la ronde (1 à 5) jouée contre cette équipe, null = non défini. Détermine
+    // l'ordre d'affichage des équipes adverses dans « 5. Résultats » et « 7. Stats ».
+    round: null,
     roster: Array.from({length:TEAM_SIZE}, ()=>({name:'', faction:'', fd:''})),
     matchup: Array.from({length:TEAM_SIZE}, ()=>Array(TEAM_SIZE).fill(0)),
     // Smiley content/mécontent facultatif par case, purement visuel (n'entre jamais dans
@@ -1535,12 +1542,41 @@ function renderOppTeamPanel(){
   document.getElementById('importOppRosterTextBtn').addEventListener('click', ()=>openTextImportModal('opp:'+idx));
   renderRoster('oppRosterActive', ot.roster);
 }
+const MAX_ROUND = 5;
+function oppRoundOf(ot){
+  const r = ot && parseInt(ot.round,10);
+  return (r>=1 && r<=MAX_ROUND) ? r : null;
+}
+// Indices des équipes adverses triés par numéro de ronde (rondes non définies à la fin,
+// puis ordre de création).
+function oppIdxByRound(){
+  return state.oppTeams.map((ot,i)=>i).sort((a,b)=>{
+    const ra = oppRoundOf(state.oppTeams[a]), rb = oppRoundOf(state.oppTeams[b]);
+    if(ra===null && rb===null) return a-b;
+    if(ra===null) return 1;
+    if(rb===null) return -1;
+    return ra-rb || a-b;
+  });
+}
+function oppSelectLabel(ot,idx){
+  const r = oppRoundOf(ot);
+  return (r!==null ? 'R'+r+' · ' : '') + (ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1)));
+}
+function renderLiveRoundSelect(){
+  const sel = document.getElementById('liveRoundSelect');
+  if(!sel) return;
+  const cur = oppRoundOf(liveOppTeam());
+  let h = `<option value="" ${cur===null?'selected':''}>— non définie —</option>`;
+  for(let r=1;r<=MAX_ROUND;r++) h += `<option value="${r}" ${r===cur?'selected':''}>Ronde ${r}</option>`;
+  sel.innerHTML = h;
+}
 function renderLiveOppSelect(){
+  renderLiveRoundSelect();
   const sel = document.getElementById('liveOppSelect');
   if(!sel) return;
   const prev = state.liveOppIdx;
-  sel.innerHTML = state.oppTeams.map((ot,idx)=>
-    `<option value="${idx}" ${idx===prev?'selected':''}>${ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1))}</option>`
+  sel.innerHTML = oppIdxByRound().map(idx=>
+    `<option value="${idx}" ${idx===prev?'selected':''}>${escapeHtml(oppSelectLabel(state.oppTeams[idx],idx))}</option>`
   ).join('');
 }
 // Sélecteur d'équipe adverse dédié à l'onglet « 5. Résultats Réels Pairing » : indépendant
@@ -1550,8 +1586,8 @@ function renderResultsOppSelect(){
   const sel = document.getElementById('resultsOppSelect');
   if(!sel) return;
   const prev = state.resultsOppIdx;
-  sel.innerHTML = state.oppTeams.map((ot,idx)=>
-    `<option value="${idx}" ${idx===prev?'selected':''}>${ot.name && ot.name.trim() ? ot.name : ('Équipe adverse '+(idx+1))}</option>`
+  sel.innerHTML = oppIdxByRound().map(idx=>
+    `<option value="${idx}" ${idx===prev?'selected':''}>${escapeHtml(oppSelectLabel(state.oppTeams[idx],idx))}</option>`
   ).join('');
 }
 
@@ -4159,8 +4195,14 @@ function renderStats(){
       played++; my+=p.myScore; opp+=p.oppScore;
       if(p.myScore>p.oppScore) tw++; else if(p.myScore<p.oppScore) tl++; else td++;
     });
-    return {name:oppName(ot,i), my, opp, played, tw, tl, td};
+    return {name:oppName(ot,i), my, opp, played, tw, tl, td, round:oppRoundOf(ot), idx:i};
+  }).sort((a,b)=>{
+    if(a.round===null && b.round===null) return a.idx-b.idx;
+    if(a.round===null) return 1;
+    if(b.round===null) return -1;
+    return a.round-b.round || a.idx-b.idx;
   });
+  const rLabel = r => r.round!==null ? 'Ronde '+r.round : 'Ronde non définie';
   const playedRounds = rounds.filter(r=>r.played>0);
   const gMy = rounds.reduce((a,r)=>a+r.my,0), gOpp = rounds.reduce((a,r)=>a+r.opp,0);
   const gTW = rounds.reduce((a,r)=>a+r.tw,0), gTL = rounds.reduce((a,r)=>a+r.tl,0), gTD = rounds.reduce((a,r)=>a+r.td,0);
@@ -4180,11 +4222,11 @@ function renderStats(){
     let h = `<table class="stats"><thead><tr><th style="text-align:left">Ronde / Adversaire</th><th>Tables jouées</th><th>Tables V-N-D</th><th>Mon équipe</th><th>Adversaire</th><th>Écart</th><th>Résultat</th></tr></thead><tbody>`;
     rounds.forEach((r,i)=>{
       if(r.played===0){
-        h += `<tr><td class="rowhead">Ronde ${i+1} — ${escapeHtml(r.name)}</td><td class="none" colspan="6">Pas encore de résultat</td></tr>`;
+        h += `<tr><td class="rowhead">${rLabel(r)} — ${escapeHtml(r.name)}</td><td class="none" colspan="6">Pas encore de résultat</td></tr>`;
         return;
       }
       const res = resOf(r.my,r.opp);
-      h += `<tr><td class="rowhead">Ronde ${i+1} — ${escapeHtml(r.name)}</td>
+      h += `<tr><td class="rowhead">${rLabel(r)} — ${escapeHtml(r.name)}</td>
         <td>${r.played}/${TEAM_SIZE}</td><td>${r.tw}-${r.td}-${r.tl}</td>
         <td class="sc"><b>${r.my}</b></td><td><b>${r.opp}</b></td>
         <td class="${cls(r.my-r.opp)}"><b>${sgn(r.my-r.opp)}</b></td>
@@ -4198,14 +4240,16 @@ function renderStats(){
 
   // Tableau joueur × équipe adverse
   let h = `<table class="stats"><thead><tr><th style="text-align:left">Joueur</th>`;
-  state.oppTeams.forEach((ot,i)=>{ h += `<th>R${i+1} · ${escapeHtml(oppName(ot,i))}</th>`; });
+  const oppOrder = oppIdxByRound();
+  oppOrder.forEach(i=>{ const ot=state.oppTeams[i], r=oppRoundOf(ot); h += `<th>${r!==null?'R'+r:'R?'} · ${escapeHtml(oppName(ot,i))}</th>`; });
   h += `<th>Total pour</th><th>Total contre</th><th>Écart</th><th>V-N-D</th></tr></thead><tbody>`;
   const colTot = Array.from({length:nOpp}, ()=>({my:0,opp:0,n:0}));
   state.myTeam.forEach((me,pi)=>{
     const name = displayName(me,'Joueur '+(pi+1));
     let tMy=0, tOpp=0, w=0, d=0, l=0;
     let row = `<tr><td class="rowhead">${escapeHtml(name)}${me.faction?`<small>${escapeHtml(me.faction)}</small>`:''}</td>`;
-    state.oppTeams.forEach((ot,oi)=>{
+    oppOrder.forEach(oi=>{
+      const ot = state.oppTeams[oi];
       let my=0, opp=0, n=0, vs=[];
       ot.pairing.forEach(p=>{
         if(p.myList!==pi || p.oppList===null || !isNum(p.myScore) || !isNum(p.oppScore)) return;
@@ -4225,7 +4269,7 @@ function renderStats(){
   });
   // Ligne total équipe
   h += `<tr class="total"><td class="rowhead">TOTAL ÉQUIPE</td>`;
-  colTot.forEach(c=>{
+  oppOrder.forEach(oi=>{ const c = colTot[oi];
     h += c.n===0 ? '<td class="none">—</td>' : `<td><span class="sc">${c.my}–${c.opp}</span></td>`;
   });
   h += `<td>${gMy}</td><td>${gOpp}</td><td class="${cls(gMy-gOpp)}">${sgn(gMy-gOpp)}</td><td>${gTW}-${gTD}-${gTL}</td></tr>`;
@@ -4307,6 +4351,20 @@ document.getElementById('importMyRosterBtn').addEventListener('click', ()=>{
 document.getElementById('modeSelect').addEventListener('change', e=>{
   state.mode = e.target.value;
   renderLive();
+});
+
+document.getElementById('liveRoundSelect').addEventListener('change', e=>{
+  const ot = liveOppTeam();
+  const newRound = e.target.value==='' ? null : parseInt(e.target.value,10);
+  const oldRound = oppRoundOf(ot);
+  if(newRound === oldRound) return;
+  // Une ronde = un seul adversaire : si une autre équipe porte déjà ce numéro, on échange
+  // les deux numéros (elle récupère l'ancien numéro de l'équipe en direct, ou aucun).
+  if(newRound!==null){
+    state.oppTeams.forEach(o=>{ if(o!==ot && oppRoundOf(o)===newRound) o.round = oldRound; });
+  }
+  ot.round = newRound;
+  renderAll();
 });
 
 document.getElementById('liveOppSelect').addEventListener('change', e=>{
@@ -4548,6 +4606,7 @@ function applyLoadedState(loaded){
   state.oppTeams.forEach((ot,idx)=>{
     ot.matchupMood = resizeMoodMatrixTo(ot.matchupMood, TEAM_SIZE);
     ot.layoutMood = resizeLayoutMatrixTo(ot.layoutMood, TEAM_SIZE);
+    ot.round = oppRoundOf(ot);
     if(!ot.pairing || !ot.pairing.length) ot.pairing = makePairingArray();
     if(legacyPairing && legacyPairing.length && idx===(typeof state.liveOppIdx==='number'?state.liveOppIdx:0)){
       ot.pairing = resizeArrayTo(legacyPairing, TEAM_SIZE, ()=>({myList:null, oppList:null, myScore:null, oppScore:null, oppCandidates:[null,null]}));
